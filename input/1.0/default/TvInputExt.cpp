@@ -43,7 +43,7 @@ TvInputExt::TvInputExt(HwITvInput*&& tvInput) : mTvInput(tvInput) {
     } else {
         LOG(ERROR) << "Failed to get tv_input hw module";
     }
-    mCallbackOps.notify = &TvInputExt::notify_ext;
+    mCallbackOpsExt.notify_ext = &TvInputExt::notify_ext;
 }
 
 TvInputExt::~TvInputExt() {
@@ -87,7 +87,7 @@ Return<void> TvInputExt::getStreamConfigurations_ext(int32_t deviceId, getStream
 Return<void> TvInputExt::setExtCallback(const sp<ICallbackExt>& callback)  {
     mExtCallback = callback;
     if (mExtCallback != nullptr) {
-        mDevice->initialize(mDevice, &mCallbackOps, nullptr);
+        mDevice->initialize_ext(mDevice, &mCallbackOpsExt, nullptr);
     }
     return Void();
 }
@@ -167,15 +167,14 @@ Return<void> TvInputExt::openStream_ext(int32_t deviceId, int32_t streamId,
 }
 
 // static
-void TvInputExt::notify_ext(struct tv_input_device* __unused, tv_input_event_t* event,
+void TvInputExt::notify_ext(struct tv_input_device* __unused, tv_input_event_ext_t* event,
                      void* optionalStatus) {
     // remove
     (void)optionalStatus;
     if (mExtCallback != nullptr && event != nullptr) {
         TvInputEventExt tvInputEvent;
-        HwTvInputEvent hwEvent;
-        tvInputEvent.type = static_cast<TvInputEventType>(event->type);
-        if (event->type == TV_INPUT_EVENT_PRIV_CMD_TO_APP) {
+        tvInputEvent.type = static_cast<TvInputEventType>(event->base_event.type);
+        if (event->base_event.type == TV_INPUT_EVENT_PRIV_CMD_TO_APP) {
             tvInputEvent.deviceInfo.base.deviceId = event->priv_app_cmd.device_id;
             tvInputEvent.priv_app_cmd.action = event->priv_app_cmd.action;
             //TODO
@@ -187,39 +186,39 @@ void TvInputExt::notify_ext(struct tv_input_device* __unused, tv_input_event_t* 
                 tvInputEvent.priv_app_cmd.data.push_back(bundle);
             }*/
             mExtCallback->notify_ext(tvInputEvent);
-        } else if (event->type >= TV_INPUT_EVENT_CAPTURE_SUCCEEDED) {
-            tvInputEvent.deviceInfo.base.deviceId = event->capture_result.device_id;
-            tvInputEvent.deviceInfo.streamId = event->capture_result.stream_id;
+        } else if (event->base_event.type >= TV_INPUT_EVENT_CAPTURE_SUCCEEDED) {
+            tvInputEvent.deviceInfo.base.deviceId = event->base_event.capture_result.device_id;
+            tvInputEvent.deviceInfo.streamId = event->base_event.capture_result.stream_id;
             // tvInputEvent.capture_result.buffId = event->capture_result.buff_id;
-            tvInputEvent.capture_result.buffSeq = event->capture_result.seq;
+            tvInputEvent.capture_result.buffSeq = event->base_event.capture_result.seq;
             // tvInputEvent.capture_result.buffer = event->capture_result.buffer;
             mExtCallback->notify_ext(tvInputEvent);
         } else {
             // android tv_input event
-            hwEvent.deviceInfo.deviceId = event->device_info.device_id;
-            hwEvent.deviceInfo.type = static_cast<TvInputType>(
-                    event->device_info.type);
-            hwEvent.deviceInfo.portId = event->device_info.hdmi.port_id;
-            hwEvent.deviceInfo.cableConnectionStatus = CableConnectionStatus::UNKNOWN;
+            tvInputEvent.deviceInfo.base.deviceId = event->base_event.device_info.device_id;
+            tvInputEvent.deviceInfo.base.type = static_cast<TvInputType>(
+                    event->base_event.device_info.type);
+            tvInputEvent.deviceInfo.base.portId = event->base_event.device_info.hdmi.port_id;
+            tvInputEvent.deviceInfo.base.cableConnectionStatus = CableConnectionStatus::UNKNOWN;
             // TODO: Ensure the legacy audio type code is the same once audio HAL default
             // implementation is ready.
-            hwEvent.deviceInfo.audioType = static_cast<AudioDevice>(
-                    event->device_info.audio_type);
-            memset(hwEvent.deviceInfo.audioAddress.data(), 0,
-                    hwEvent.deviceInfo.audioAddress.size());
-            const char* address = event->device_info.audio_address;
+            tvInputEvent.deviceInfo.base.audioType = static_cast<AudioDevice>(
+                    event->base_event.device_info.audio_type);
+            memset(tvInputEvent.deviceInfo.base.audioAddress.data(), 0,
+                    tvInputEvent.deviceInfo.base.audioAddress.size());
+            const char* address = event->base_event.device_info.audio_address;
             if (address != nullptr) {
                 size_t size = strlen(address);
-                if (size > hwEvent.deviceInfo.audioAddress.size()) {
+                if (size > tvInputEvent.deviceInfo.base.audioAddress.size()) {
                     LOG(ERROR) << "Audio address is too long. Address:" << address << "";
                     return;
                 }
                 for (size_t i = 0; i < size; ++i) {
-                    hwEvent.deviceInfo.audioAddress[i] =
-                        static_cast<uint8_t>(event->device_info.audio_address[i]);
+                    tvInputEvent.deviceInfo.base.audioAddress[i] =
+                        static_cast<uint8_t>(event->base_event.device_info.audio_address[i]);
                 }
             }
-            mExtCallback->notify(hwEvent);
+            mExtCallback->notify_ext(tvInputEvent);
         }
     }
 }

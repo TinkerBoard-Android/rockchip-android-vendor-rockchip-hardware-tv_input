@@ -68,13 +68,13 @@ struct TvInputExt : public ::rockchip::hardware::tv::input::V1_0::ITvInput {
             getStreamConfigurations_ext_cb _hidl_cb) override;
     Return<void> openStream_ext(int32_t deviceId, int32_t streamId, int32_t streamType,
             openStream_ext_cb _hidl_cb) override;
-    static void notify_ext(struct tv_input_device* __unused, tv_input_event_t* event,
+    static void notify_ext(struct tv_input_device* __unused, tv_input_event_ext_t* event,
             void* __unused);
 
 private:
     std::unique_ptr<HwITvInput> mTvInput;
     static sp<ICallbackExt> mExtCallback;
-    tv_input_callback_ops_t mCallbackOps;
+    tv_input_callback_ops_ext_t mCallbackOpsExt;
     tv_input_device_t* mDevice;
 };
 
