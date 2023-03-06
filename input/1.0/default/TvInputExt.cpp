@@ -189,7 +189,7 @@ void TvInputExt::notify_ext(struct tv_input_device* __unused, tv_input_event_ext
         } else if (event->base_event.type >= TV_INPUT_EVENT_CAPTURE_SUCCEEDED) {
             tvInputEvent.deviceInfo.base.deviceId = event->base_event.capture_result.device_id;
             tvInputEvent.deviceInfo.streamId = event->base_event.capture_result.stream_id;
-            // tvInputEvent.capture_result.buffId = event->capture_result.buff_id;
+            tvInputEvent.capture_result.buffId = event->buff_id;
             tvInputEvent.capture_result.buffSeq = event->base_event.capture_result.seq;
             // tvInputEvent.capture_result.buffer = event->capture_result.buffer;
             mExtCallback->notify_ext(tvInputEvent);
