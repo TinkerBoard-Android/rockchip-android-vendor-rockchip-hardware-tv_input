@@ -139,17 +139,19 @@ Return<void> TvInputExt::setSinglePreviewBuffer(const PreviewBuffer& buff) {
 
 Return<void> TvInputExt::openStream_ext(int32_t deviceId, int32_t streamId,
                                         int32_t streamType, openStream_ext_cb cb)  {
-    tv_stream_t stream;
-    stream.stream_id = streamId;
-    stream.type = streamType;
-    int ret = mDevice->open_stream(mDevice, deviceId, &stream);
+    tv_stream_ext_t stream;
+    stream.base_stream.stream_id = streamId;
+    stream.base_stream.type = streamType;
+    int ret = mDevice->open_stream_ext(mDevice, deviceId, &stream);
     Result res = Result::UNKNOWN;
     native_handle_t* sidebandStream = nullptr;
+    native_handle_t* sidebandCancelStream = nullptr;
     if (ret == 0) {
         // if (isSupportedStreamType(stream.type)) {
-        if (stream.type != TV_STREAM_TYPE_BUFFER_PRODUCER) {
+        if (stream.base_stream.type != TV_STREAM_TYPE_BUFFER_PRODUCER) {
             res = Result::OK;
-            sidebandStream = stream.sideband_stream_source_handle;
+            sidebandStream = stream.base_stream.sideband_stream_source_handle;
+            sidebandCancelStream = stream.sideband_cancel_stream_source_handle;
         } else {
             res = Result::OK;
         }
@@ -162,7 +164,7 @@ Return<void> TvInputExt::openStream_ext(int32_t deviceId, int32_t streamId,
             res = Result::INVALID_ARGUMENTS;
         }
     }
-    cb(res, sidebandStream);
+    cb(res, sidebandStream, sidebandCancelStream);
     return Void();
 }
 
