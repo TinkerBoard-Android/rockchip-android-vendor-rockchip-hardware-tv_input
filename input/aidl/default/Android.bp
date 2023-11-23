@@ -33,6 +33,7 @@ cc_binary {
         "sideband/RTSidebandWindow.cpp",
         "HinDevImpl.cpp",
         "TvDeviceV4L2Event.cpp",
+        "pcie/*.cpp",
     ],
     static_libs: [
         "libaidlcommonsupport",

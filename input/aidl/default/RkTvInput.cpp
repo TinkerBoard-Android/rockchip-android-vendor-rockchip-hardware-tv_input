@@ -85,7 +85,11 @@ NotifyQueueDataCallback dataCallback(tv_input_capture_result_t result, uint64_t 
 
 V4L2EventCallBack hinDevEventCallback(int event_type) {
     ALOGW("%s event type: %d", __FUNCTION__, event_type);
-    if (s_TvInputPriv && !s_TvInputPriv->isOpened) {
+    if (s_TvInputPriv == NULL || s_TvInputPriv->mDev == NULL) {
+        ALOGE("%s s_TvInputPriv or dev NULL", __FUNCTION__);
+        return 0;
+    }
+    if (!s_TvInputPriv->isOpened) {
        ALOGE("%s The device is not open ", __FUNCTION__);
        return 0;
     }
@@ -106,6 +110,7 @@ V4L2EventCallBack hinDevEventCallback(int event_type) {
             if (s_TvInputPriv->mDev) {
                 isHdmiIn = s_TvInputPriv->mDev->get_current_sourcesize(s_HinDevStreamWidth, s_HinDevStreamHeight,s_HinDevStreamFormat);
                 s_HinDevStreamInterlaced = s_TvInputPriv->mDev->check_interlaced();
+                s_TvInputPriv->mDev->markPcieEpNeedRestart(PCIE_CMD_HDMIIN_SOURCE_CHANGE);
                 ALOGW("%s event type: %d, isHdmiIn=%d, s_HinDevStreamInterlaced=%d",
                     __FUNCTION__, event_type, isHdmiIn, s_HinDevStreamInterlaced);
                 TvInputEvent event;
@@ -123,12 +128,47 @@ V4L2EventCallBack hinDevEventCallback(int event_type) {
             break;
         case CMD_HDMIIN_RESET:
             sendTvMessage("hdmiinreset", STREAM_ID_HDMIIN);
+            //s_TvInputPriv->mDev->send_ep_stream(PCIE_CMD_HDMIIN_RESET, NULL);
             break;
     }
     ALOGW("%s width:%d, height:%d, format:0x%x,%d", __FUNCTION__,
         s_HinDevStreamWidth, s_HinDevStreamHeight, s_HinDevStreamFormat, isHdmiIn);
     return 0;
 }
+
+NotifyTvPcieCallback tvPcieCallback(pcie_user_cmd_st cmd_st) {
+    ALOGD("%s cmd=%d", __FUNCTION__, cmd_st.cmd);
+    if (s_TvInputPriv == NULL || s_TvInputPriv->mDev == NULL) {
+        ALOGE("%s s_TvInputPriv or dev NULL", __FUNCTION__);
+        return 0;
+    }
+    if (!s_TvInputPriv->isOpened) {
+       ALOGE("%s The device is not open ", __FUNCTION__);
+       return 0;
+    }
+    if (cmd_st.cmd == PCIE_CMD_HDMIIN_CTRL) {
+        s_TvInputPriv->mDev->setInDevConnected(cmd_st.inDevConnected);
+        //TODO
+    } else if (cmd_st.cmd == PCIE_CMD_HDMIIN_SOURCE_CHANGE) {
+        s_HinDevStreamWidth = cmd_st.frameWidth;
+        s_HinDevStreamHeight = cmd_st.frameHeight;
+        s_HinDevStreamFormat = cmd_st.framePixelFormat;
+        TvInputEvent event;
+        event.type = TvInputEventType::STREAM_CONFIGURATIONS_CHANGED;
+        s_TvInputPriv->callback->notify(event);
+    } else if (cmd_st.cmd == PCIE_CMD_HDMIIN_INPUTIN_OUT) {
+        s_TvInputPriv->mDev->setInDevConnected(false);
+        //TODO
+    } else if (cmd_st.cmd == PCIE_CMD_HDMIIN_RESET) {
+        //TODO
+    } else {
+        return 0;
+    }
+    ALOGE("%s width:%d, height:%d, format:0x%x, connect=%d", __FUNCTION__, s_HinDevStreamWidth,
+        s_HinDevStreamHeight, s_HinDevStreamFormat, cmd_st.inDevConnected);
+    return 0;
+}
+
 NotifyCommandCallback commandCallback(tv_input_command command) {
     hinDevEventCallback(command.command_id);
     return 0;
@@ -151,6 +191,7 @@ int RkTvInput::hin_dev_open(int deviceId, int type)
             s_TvInputPriv->mDev = hinDevImpl;
             s_TvInputPriv->mDev->set_data_callback((V4L2EventCallBack)hinDevEventCallback);
             s_TvInputPriv->mDev->set_command_callback((NotifyCommandCallback)commandCallback);
+            s_TvInputPriv->mDev->setTvPcieCallback((NotifyTvPcieCallback)tvPcieCallback);
             if (s_TvInputPriv->mDev->findDevice(deviceId, s_HinDevStreamWidth, s_HinDevStreamHeight,s_HinDevStreamFormat)!= 0) {
                 ALOGE("hinDevImpl->findDevice %d failed!", deviceId);
                 delete s_TvInputPriv->mDev;

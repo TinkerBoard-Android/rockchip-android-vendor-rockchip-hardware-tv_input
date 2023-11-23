@@ -17,6 +17,7 @@
 #include "RgaCropScale.h"
 #include <utils/Singleton.h>
 #include <RockchipRga.h>
+#include <im2d.h>
 
 namespace android {
 namespace tvinput {
@@ -42,6 +43,84 @@ namespace tvinput {
 #if defined(TARGET_RK3588)
 //#include <im2d_api/im2d.h>
 #endif
+
+int RgaCropScale::rga_copy(int src_fd, void* src_vir_addr, uint64_t src_phy_addr,
+        int src_width, int src_height, int src_format,
+        int dst_fd, void* dst_vir_addr, uint64_t dst_phy_addr) {
+    im_handle_param_t src_param;
+    memset(&src_param, 0, sizeof(src_param));
+    src_param.width = src_width;
+    src_param.height = src_height;
+    if (src_format == HAL_PIXEL_FORMAT_YCbCr_422_SP) {
+        src_param.format = RK_FORMAT_YCbCr_422_SP;
+    } else {
+        src_param.format = src_format;
+    }
+    rga_buffer_handle_t src_handle;
+    if (src_fd != -1) {
+        src_handle = importbuffer_fd(src_fd, &src_param);
+    } else if (src_vir_addr) {
+        src_handle = importbuffer_virtualaddr(src_vir_addr, &src_param);
+    } else if (src_phy_addr != -1) {
+        src_handle = importbuffer_physicaladdr(src_phy_addr, &src_param);
+    } else {
+        ALOGE("%s import src failed due to input null", __FUNCTION__);
+        return -1;
+    }
+    if (src_handle <= 0) {
+        ALOGE("%s import %d src failed %dx%d, format=%d, %s",
+            __FUNCTION__, src_fd, src_width, src_height, src_format, imStrError());
+        return -1;
+    }
+    rga_buffer_t src = wrapbuffer_handle(src_handle, src_width, src_height, src_param.format);
+    if (src.width == 0 || src.height == 0) {
+        ALOGE("%s src %dx%d-%d%d, format=%d, %s",
+            __FUNCTION__, src.width, src.height, src_width, src_height, src_format, imStrError());
+        releasebuffer_handle(src_handle);
+        return -1;
+    }
+
+    int dst_width = src_param.width;
+    int dst_height = src_param.height;
+    int dst_format = src_param.format;
+    im_handle_param_t dst_param;
+    memset(&dst_param, 0, sizeof(dst_param));
+    dst_param.width = dst_width;
+    dst_param.height = dst_height;
+    dst_param.format = dst_format;
+    rga_buffer_handle_t dst_handle;
+    if (dst_fd != -1) {
+        dst_handle = importbuffer_fd(dst_fd, &dst_param);
+    } else if (dst_vir_addr) {
+        dst_handle = importbuffer_virtualaddr(dst_vir_addr, &dst_param);
+    } else if (dst_phy_addr != -1) {
+        dst_handle = importbuffer_physicaladdr(dst_phy_addr, &dst_param);
+    } else {
+        ALOGE("%s import dst failed due to input null", __FUNCTION__);
+        return -1;
+    }
+    if (dst_handle <= 0) {
+        ALOGE("%s import %d dst failed %dx%d, format=%d, %s",
+            __FUNCTION__, dst_fd, dst_width, dst_height, dst_format, imStrError());
+        releasebuffer_handle(src_handle);
+        return -1;
+    }
+    rga_buffer_t dst = wrapbuffer_handle(dst_handle, dst_width, dst_height, dst_param.format);
+    if (dst.width == 0 || dst.height == 0) {
+        ALOGE("%s dst %dx%d-%d%d, format=%d, %s",
+            __FUNCTION__, dst.width, dst.height, dst_width, dst_height, dst_format, imStrError());
+        releasebuffer_handle(src_handle);
+        releasebuffer_handle(dst_handle);
+        return -1;
+    }
+
+    im_rect src_rect;
+    memset(&src_rect, 0, sizeof(src_rect));
+    imcrop(src, dst, src_rect);
+    releasebuffer_handle(src_handle);
+    releasebuffer_handle(dst_handle);
+    return 0;
+}
 
 int RgaCropScale::CropScaleNV12Or21(struct Params* in, struct Params* out)
 {

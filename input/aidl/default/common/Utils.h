@@ -73,6 +73,7 @@ enum DisplayRatio{
     SCREEN_4_3  = 0x2,
 };
 
+#define PCIE_TV_BUF_CNT             SIDEBAND_WINDOW_BUFF_CNT
 #define PQ_OFF           0
 #define PQ_MEDIAN_BLUR    80
 #define CMD_HDMIIN_RESET 0x1001
@@ -99,6 +100,9 @@ static const int64_t STREAM_BUFFER_GRALLOC_USAGE = (
 #define TV_INPUT_DEBUG_LEVEL "vendor.tvinput.debug.level"
 #define TV_INPUT_DEBUG_DUMP "vendor.tvinput.debug.dump"
 #define TV_INPUT_DEBUG_DUMPNUM "vendor.tvinput.debug.dumpnum"
+
+#define TV_INPUT_PCIE_MODE "tvinput.hdmiin.pcie_mode"
+
 #define SIDEBAND_MODE_TYPE "vendor.hwc.enable_sideband_stream_2_mode"
 
 #define DEBUG_PRINT(level, fmt, arg...)                       \

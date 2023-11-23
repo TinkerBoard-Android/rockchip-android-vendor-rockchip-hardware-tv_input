@@ -169,14 +169,54 @@ HinDevImpl::HinDevImpl()
     property_get(TV_INPUT_HDMIIN_TYPE, prop_value, "0");
     mHdmiInType = (int)atoi(prop_value);
 
-    ALOGE("prop value : mHdmiInType=%d, mDebugLevel=%d, mSkipFrame=%d",
-        mHdmiInType, mDebugLevel, mSkipFrame);
+    memset(prop_value, '\0', sizeof(prop_value));
+    property_get(TV_INPUT_PCIE_MODE, prop_value, "0");
+    mPcieMode = (int)atoi(prop_value);
+
+    ALOGE("prop value : mHdmiInType=%d, mDebugLevel=%d, mSkipFrame=%d, mPcieMode=%d",
+        mHdmiInType, mDebugLevel, mSkipFrame, mPcieMode);
 
     mV4l2Event = new V4L2DeviceEvent();
     mSidebandWindow = new RTSidebandWindow();
 }
 
 int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& initFormat) {
+    if (mPcieMode == PCIE_EP) {
+        DEBUG_PRINT(3, "pcieEp start check pcie state %d", mPcieState);
+
+        if (mPcieState == PCIE_STATE_STREAM_TRANS) {
+            ALOGE("=============do re find===============");
+            findDevice(0, initWidth, initHeight, initFormat);
+        }
+        int tryNum = 15;//1s5
+        while (mPcieState != PCIE_STATE_WAIT_REQ) {
+            if (mPcieStop) {
+                DEBUG_PRINT(3, "pcie is stop, force return");
+                return -1;
+            }
+            if (tryNum < 0) {
+                break;
+            } else {
+                usleep(100000);
+                tryNum--;
+            }
+        }
+        DEBUG_PRINT(3, "pcieEp end check pcie state=%d, tryNum=%d", mPcieState, tryNum);
+        if (mPcieState != PCIE_STATE_WAIT_REQ) {
+            mPcieEpTvInitRet = 0;
+            mSrcFrameWidth = 3840;
+            mSrcFrameHeight = 2160;
+            mPixelFormat = V4L2_PIX_FMT_NV16;
+            mIsHdmiIn = true;
+            DEBUG_PRINT(3, "pcieEp wait req failed, set imitate data %dx%d, format=%d, isDevIn=%d",
+                mSrcFrameWidth, mSrcFrameHeight, mPixelFormat, mIsHdmiIn);
+            //return 0 -1;
+        } else {
+            mPcieEpTvInitRet = 1;
+            mPcieState = PCIE_STATE_STREAM_TRANS;
+            DEBUG_PRINT(3, "pcieEp set pcie state=%d", mPcieState);
+        }
+    }
     char prop_value[PROPERTY_VALUE_MAX] = {0};
     property_get(TV_INPUT_HDMIIN_TYPE, prop_value, "0");
     int currentHdmiInType = (int)atoi(prop_value);
@@ -235,6 +275,7 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
     mWorkThread = NULL;
     mPqBufferThread = NULL;
     mIepBufferThread = NULL;
+    //not set mPcieThread = nullptr;
     mV4L2DataFormatConvert = false;
     // mPreviewThreadRunning = false;
     // mPreviewBuffThread = NULL;
@@ -318,6 +359,10 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
 
 int HinDevImpl::findDevice(int id, int& initWidth, int& initHeight,int& initFormat ) {
     ALOGD("%s called", __func__);
+    if (mPcieMode == PCIE_EP && mHdmiInType == HDMIIN_TYPE_MIPICSI) {
+        return pcieEpFindDevice(initWidth, initHeight, initFormat);
+    }
+
     // Find existing /dev/video* devices
     DIR* devdir = opendir(kDevicePath);
     int videofd,ret;
@@ -532,6 +577,9 @@ int HinDevImpl::makeHwcSidebandHandle() {
     if (mFrameType & TYPE_SIDEBAND_WINDOW) {
         mSidebandWindow->allocateSidebandHandle(&buffer, mDstFrameWidth, mDstFrameHeight, -1, RK_GRALLOC_USAGE_STRIDE_ALIGN_64);
     } else {
+        if (mPcieMode == PCIE_EP && mPcieState != PCIE_STATE_STREAM_TRANS) {
+            DEBUG_PRINT(3, "pcieEp unInit, will allocate imitate data");
+        }
         mSidebandWindow->allocateSidebandHandle(&buffer, -1);
         mSidebandWindow->allocateSidebandHandle(&mSidebandCancelHandle, 0);
     }
@@ -584,10 +632,12 @@ int HinDevImpl::start_device()
         mRequestCaptureCount = 0;
         mFirstRequestCapture = true;
     }
+    int ret = -1;
     DEBUG_PRINT(1, "[%s %d] mHinDevHandle:%x", __FUNCTION__, __LINE__, mHinDevHandle);
 
+  if (mPcieMode != PCIE_EP) {
     get_extfmt_info();
-    int ret = ioctl(mHinDevHandle, VIDIOC_QUERYCAP, &mHinNodeInfo->cap);
+    ret = ioctl(mHinDevHandle, VIDIOC_QUERYCAP, &mHinNodeInfo->cap);
     if (ret < 0) {
         DEBUG_PRINT(3, "VIDIOC_QUERYCAP Failed, error: %s", strerror(errno));
         return ret;
@@ -609,6 +659,7 @@ int HinDevImpl::start_device()
     } else {
         ALOGD("VIDIOC_REQBUFS successful.");
     }
+  }
 
     aquire_buffer();
     if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
@@ -619,33 +670,42 @@ int HinDevImpl::start_device()
         mCurrentBufferArray.memory = TVHAL_V4L2_BUF_MEMORY_TYPE;
         mCurrentBufferArray.m.planes = &mCurrentPlanes;
         mCurrentBufferArray.length = PLANES_NUM;
+      if (mPcieMode != PCIE_EP) {
         ret = ioctl(mHinDevHandle, VIDIOC_QUERYBUF, &mCurrentBufferArray);
         if (ret < 0) {
             DEBUG_PRINT(3, "VIDIOC_QUERYBUF Failed, error: %s", strerror(errno));
             return ret;
         }
+      }
         for (int i = 0; i < PLANES_NUM; i++) {
             mCurrentBufferArray.m.planes[i].m.fd = mSidebandWindow->getBufferHandleFd(mHinNodeInfo->vt_buffers[0]->handle);
             mCurrentBufferArray.m.planes[i].length = 0;
         }
     }
     for (int i = 0; i < mBufferCount; i++) {
+      if (mPcieMode != PCIE_EP) {
         DEBUG_PRINT(mDebugLevel, "bufferArray index = %d", mHinNodeInfo->bufferArray[i].index);
         DEBUG_PRINT(mDebugLevel, "bufferArray type = %d", mHinNodeInfo->bufferArray[i].type);
         DEBUG_PRINT(mDebugLevel, "bufferArray memory = %d", mHinNodeInfo->bufferArray[i].memory);
         DEBUG_PRINT(mDebugLevel, "bufferArray m.fd = %d", mHinNodeInfo->bufferArray[i].m.planes[0].m.fd);
         DEBUG_PRINT(mDebugLevel, "bufferArray length = %d", mHinNodeInfo->bufferArray[i].length);
         DEBUG_PRINT(mDebugLevel, "buffer length = %d", mSidebandWindow->getBufferLength(mHinNodeInfo->buffer_handle_poll[i]));
-
+      }
  	//mHinNodeInfo->bufferArray[i].flags = V4L2_BUF_FLAG_NO_CACHE_INVALIDATE |
         //                 V4L2_BUF_FLAG_NO_CACHE_CLEAN;
+      if (mPcieMode != PCIE_EP) {
         ret = ioctl(mHinDevHandle, VIDIOC_QBUF, &mHinNodeInfo->bufferArray[i]);
         if (ret < 0) {
             DEBUG_PRINT(3, "VIDIOC_QBUF Failed, error: %s", strerror(errno));
             return -1;
         }
+      }
     }
     ALOGD("[%s %d] VIDIOC_QBUF successful", __FUNCTION__, __LINE__);
+    if (mPcieMode == PCIE_EP) {
+        ALOGD("[%s %d] VIDIOC_STREAMON with pcieEp", __FUNCTION__, __LINE__);
+        return 0;
+    }
 
     v4l2_buf_type bufType;
     bufType = TVHAL_V4L2_BUF_TYPE;
@@ -674,6 +734,10 @@ int HinDevImpl::stop_device()
 
 int HinDevImpl::start()
 {
+    if (mPcieMode == PCIE_EP && mPcieState != PCIE_STATE_STREAM_TRANS) {
+        DEBUG_PRINT(3, "pcieEp unInit");
+        return NO_ERROR;
+    }
     ALOGD("%s %d", __FUNCTION__, __LINE__);
     int ret;
     if(mOpen == true){
@@ -721,6 +785,13 @@ int HinDevImpl::start()
     property_set(TV_INPUT_PQ_MODE, "0");
     property_set(TV_INPUT_HDMIIN, "1");
 
+    if (mPcieMode == PCIE_RC) {
+        ALOGD("start pcie rc");
+        mTvPcieRc = new TvPcieRc();
+        mPcieState = PCIE_STATE_WAIT_DEV_INIT;
+        mPcieThread = new PcieThread(this);
+    }
+
     mWorkThread = new WorkThread(this);
     mState = START;
     memset(prop_value, '\0', sizeof(prop_value));
@@ -750,6 +821,8 @@ int HinDevImpl::stop()
     int ret;
     mPqMode = PQ_OFF;
     mState = STOPED;
+    mPcieStop = true;
+    mPcieState = PCIE_STATE_UNSET;
     char prop_value[PROPERTY_VALUE_MAX] = {0};
     property_get(TV_INPUT_PQ_ENABLE, prop_value, "0");
     if ((int)atoi(prop_value) == 1 && !mPqIniting) {
@@ -803,6 +876,26 @@ int HinDevImpl::stop()
     if (!mIepDoneList.empty()) {
         DEBUG_PRINT(3, "clear mIepDoneList");
         mIepDoneList.clear();
+    }
+
+    if (mTvPcieRc) {
+        mTvPcieRc->stop();
+    }
+    if (mTvPcieEp) {
+        mTvPcieEp->stop();
+    }
+
+    if (mPcieThread) {
+        DEBUG_PRINT(3, "pcie thread start exit");
+        mPcieThread->requestExit();
+        mPcieThread.clear();
+        mPcieThread = nullptr;
+        DEBUG_PRINT(3, "pcie thread end exit");
+    }
+
+    if (!mPcieBufPrepareList.empty()) {
+        DEBUG_PRINT(3, "clear mPcieBufPrepareList");
+        mPcieBufPrepareList.clear();
     }
 
     enum v4l2_buf_type bufType = TVHAL_V4L2_BUF_TYPE;
@@ -989,6 +1082,9 @@ int HinDevImpl::get_extfmt_info() {
 
 int HinDevImpl::get_HdmiIn(bool enforce){
     if(enforce && mIsHdmiIn) return mIsHdmiIn;
+    if (mPcieMode == PCIE_EP) {
+        return mIsHdmiIn;
+    }
     struct v4l2_control control;
     memset(&control, 0, sizeof(struct v4l2_control));
     control.id = V4L2_CID_DV_RX_POWER_PRESENT;
@@ -1033,6 +1129,16 @@ int HinDevImpl::set_mode(int displayMode)
 
 int HinDevImpl::set_format(int width, int height, int color_format)
 {
+    if (mPcieMode == PCIE_EP) {
+        if (mPcieState == PCIE_STATE_STREAM_TRANS) {
+            width = mSrcFrameWidth;
+            height = mSrcFrameHeight;
+            color_format = mPixelFormat;
+        } else {
+            DEBUG_PRINT(3, "pcieEp unInit");
+            return NO_ERROR;
+        }
+    }
     ALOGD("[%s %d] width=%d, height=%d, color_format=%d, mPixelFormat=%d", __FUNCTION__, __LINE__, width, height, color_format, mPixelFormat);
     Mutex::Autolock autoLock(mLock);
     if (mOpen == true)
@@ -1051,7 +1157,11 @@ int HinDevImpl::set_format(int width, int height, int color_format)
     mHinNodeInfo->format.fmt.pix.height = height;
     mHinNodeInfo->format.fmt.pix.pixelformat = mPixelFormat;
 
-    ret = ioctl(mHinDevHandle, VIDIOC_S_FMT, &mHinNodeInfo->format);
+    if (mPcieMode == PCIE_EP) {
+        ret = 0;
+    } else {
+        ret = ioctl(mHinDevHandle, VIDIOC_S_FMT, &mHinNodeInfo->format);
+    }
     if (ret < 0) {
         DEBUG_PRINT(3, "[%s %d] failed, set VIDIOC_S_FMT %d, %s", __FUNCTION__, __LINE__, ret, strerror(ret));
         return ret;
@@ -1066,6 +1176,11 @@ int HinDevImpl::set_format(int width, int height, int color_format)
 int HinDevImpl::set_crop(int x, int y, int width, int height)
 {
     ALOGD("[%s %d] crop [%d - %d -%d - %d]", __FUNCTION__, __LINE__, x, y, width, height);
+    if (mPcieMode == PCIE_EP) {
+        width = mSrcFrameWidth;
+        height = mSrcFrameHeight;
+        ALOGE("[%s2] crop [%d - %d -%d - %d]", __FUNCTION__, x, y, width, height);
+    }
     mSidebandWindow->setCrop(x, y, width, height);
     return NO_ERROR;
 }
@@ -1139,12 +1254,15 @@ int HinDevImpl::aquire_buffer()
     DEBUG_PRINT(3, "%s %d", __FUNCTION__, __LINE__);
     memset(&mHinNodeInfo->vt_buffers, 0, sizeof(mHinNodeInfo->vt_buffers));
     for (int i = 0; i < mBufferCount; i++) {
+     if (mPcieMode != PCIE_EP) {
         memset(&mHinNodeInfo->planes[i], 0, sizeof(struct v4l2_plane));
+     }
         memset(&mHinNodeInfo->bufferArray[i], 0, sizeof(struct v4l2_buffer));
 
         mHinNodeInfo->bufferArray[i].index = i;
         mHinNodeInfo->bufferArray[i].type = TVHAL_V4L2_BUF_TYPE;
         mHinNodeInfo->bufferArray[i].memory = TVHAL_V4L2_BUF_MEMORY_TYPE;
+     if (mPcieMode != PCIE_EP) {
         if (mHinNodeInfo->cap.device_caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
             mHinNodeInfo->bufferArray[i].m.planes = &mHinNodeInfo->planes[i];
             mHinNodeInfo->bufferArray[i].length = PLANES_NUM;
@@ -1155,7 +1273,7 @@ int HinDevImpl::aquire_buffer()
             DEBUG_PRINT(3, "VIDIOC_QUERYBUF Failed, error: %s", strerror(errno));
             return ret;
         }
-
+     }
 
        if (mFrameType & TYPE_SIDEBAND_WINDOW) {
             ret = mSidebandWindow->allocateBuffer(&mHinNodeInfo->buffer_handle_poll[i]);
@@ -1172,6 +1290,12 @@ int HinDevImpl::aquire_buffer()
                 return ret;
             } else {
                 DEBUG_PRINT(3, "dequeue success fd=%d", mHinNodeInfo->vt_buffers[i]->handle->data[0]);
+                if (mPcieMode == PCIE_EP) {
+                    if (mTvPcieEp) {
+                        DEBUG_PRINT(3, "qBuf to pcie ep %d", i);
+                        mTvPcieEp->qBuf(mHinNodeInfo->vt_buffers[i]->handle);
+                    }
+                }
             }
         } else {
             ret = mSidebandWindow->allocateBuffer(&mHinNodeInfo->buffer_handle_poll[i]);
@@ -1181,7 +1305,7 @@ int HinDevImpl::aquire_buffer()
             }
         }
 
-        if (mHinNodeInfo->cap.device_caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
+        if (mPcieMode != PCIE_EP && mHinNodeInfo->cap.device_caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE) {
             for (int j=0; j<PLANES_NUM; j++) {
                 //mHinNodeInfo->bufferArray[i].m.planes[j].m.fd = mSidebandWindow->getBufferHandleFd(mHinNodeInfo->buffer_handle_poll[i]);
                 if (mFrameType & TYPE_SIDEBAND_WINDOW) {
@@ -1254,6 +1378,23 @@ int HinDevImpl::release_buffer()
         }
         if (mIepTempHandle.out_vt_buffer != nullptr) {
             mSidebandWindow->freeBuffer(&mIepTempHandle.out_vt_buffer);
+        }
+    }
+
+    {
+        if (!mPcieBufList.empty()) {
+            for (int i=0; i<mPcieBufList.size(); i++) {
+                //mSidebandWindow->freeBuffer(&mPqBufferHandle[i].srcHandle, 1);
+                mPcieBufList[i].srcHandle = NULL;
+                if (mPcieBufList[i].outHandle) {
+                    mSidebandWindow->freeBuffer(&mPcieBufList[i].outHandle, 1);
+                    mPcieBufList[i].outHandle = NULL;
+                }
+                if (mPcieBufList[i].out_vt_buffer != nullptr) {
+                    mSidebandWindow->freeBuffer(&mPcieBufList[i].out_vt_buffer);
+                }
+            }
+            mPcieBufList.clear();
         }
     }
 
@@ -1403,6 +1544,7 @@ void HinDevImpl::wrapCaptureResultAndNotify(uint64_t buffId,buffer_handle_t hand
         return;
     }*/
     tv_input_capture_result_t result;
+    memset(&result, 0, sizeof(result));
     //result.buff_id = buffId;
     //ALOGD("%s %lld,end.", __FUNCTION__,(long long)buffId);
     // result.buffer = handle;  //if need
@@ -1747,6 +1889,7 @@ int HinDevImpl::deal_priv_message(const std::string action, const std::map<std::
                 mSidebandWindow->show(mSignalHandle, FULL_SCREEN, mHdmiInType);
             }
         } else if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
+            markPcieEpNeedRestart(PCIE_CMD_HDMIIN_INPUTIN_OUT);
             showVTunnel(mSignalVTBuffer);
         } else if (mFrameType & TYPE_STREAM_BUFFER_PRODUCER) {
             wrapCaptureResultAndNotify(0,
@@ -1829,6 +1972,8 @@ int HinDevImpl::workThread()
         }
 
         int ret;
+      if (mPcieMode == PCIE_EP) {
+      } else {
         int ts;
         fd_set fds;
         struct timeval tv;
@@ -1846,12 +1991,32 @@ int HinDevImpl::workThread()
         if(ts == 0 || mState != START) {
             return 0;
         }
+      }
 
         int currDqbufHandleIndex = mHinNodeInfo->currBufferHandleIndex;
         int currentDqBufFd = 0;
         if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
             DEBUG_PRINT(mDebugLevel, "start VIDIOC_DQBUF");
-            ret = ioctl(mHinDevHandle, VIDIOC_DQBUF, &mCurrentBufferArray);
+            if (mPcieMode == PCIE_EP) {
+                if (mTvPcieEp) {
+                    ret = -1;
+                    if (mPcieState == PCIE_STATE_STREAM_TRANS) {
+                        ret = mTvPcieEp->dqBufFd();
+                        if (ret > 0) {
+                            currentDqBufFd = ret;
+                        }
+                    }
+                    if (ret < 0) {
+                        usleep(1000);
+                        return NO_ERROR;
+                    }
+                } else {
+                    DEBUG_PRINT(3, "TvPcieEp is NULL");
+                    return -1;
+                }
+            } else {
+                ret = ioctl(mHinDevHandle, VIDIOC_DQBUF, &mCurrentBufferArray);
+            }
         } else {
             ret = ioctl(mHinDevHandle, VIDIOC_DQBUF, &mHinNodeInfo->bufferArray[currDqbufHandleIndex]);
         }
@@ -1861,7 +2026,9 @@ int HinDevImpl::workThread()
         } else {
             if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
                 bool findCorrectFd = false;
-                currentDqBufFd = mCurrentBufferArray.m.planes[0].m.fd;
+                if (mPcieMode != PCIE_EP) {
+                    currentDqBufFd = mCurrentBufferArray.m.planes[0].m.fd;
+                }
                 for (int i = 0; i < SIDEBAND_WINDOW_BUFF_CNT; i++) {
                     if (currentDqBufFd == mHinNodeInfo->vt_buffers[i]->handle->data[0]) {
                         currDqbufHandleIndex = i;
@@ -1875,12 +2042,12 @@ int HinDevImpl::workThread()
                         ALOGE("err vtunnel bufferArray fd=%d", mHinNodeInfo->vt_buffers[i]->handle->data[0]);
                     }
                 }
-                if (mDebugLevel == 3) {
+                if (mDebugLevel == 3 && mPcieMode != PCIE_EP) {
                     ALOGE("VIDIOC_DQBUF mEnableDump=%d,mDumpFrameCount=%d, tid=%lu, currIndex=%d, fd=%d, %ld.%03ld-%ld",
                         mEnableDump,mDumpFrameCount, tid, currDqbufHandleIndex, currentDqBufFd,
                         (long)mCurrentBufferArray.timestamp.tv_sec, (long)(mCurrentBufferArray.timestamp.tv_usec/1000), (long)(systemTime()/1000000));
                 }
-            } else if (mDebugLevel == 3) {
+            } else if (mDebugLevel == 3 && mPcieMode != PCIE_EP) {
                 ALOGE("VIDIOC_DQBUF successful.mEnableDump=%d,mDumpFrameCount=%d, tid=%lu, currBufferHandleIndex=%d, fd=%d",
                     mEnableDump,mDumpFrameCount, tid, currDqbufHandleIndex, mHinNodeInfo->bufferArray[currDqbufHandleIndex].m.planes[0].m.fd);
             }
@@ -1957,7 +2124,7 @@ int HinDevImpl::workThread()
                 DEBUG_PRINT(3, "force skipFrame %d with median blue", mSkipFrame);
             }
 
-            if (mSkipFrame > 0) {
+            if (mSkipFrame > 0 && mPcieMode != PCIE_EP) {
                 ret = ioctl(mHinDevHandle, VIDIOC_QBUF, &mHinNodeInfo->bufferArray[currDqbufHandleIndex]);
                 mSkipFrame--;
                 DEBUG_PRINT(3, "mSkipFrame not to show %d", mSkipFrame);
@@ -2018,6 +2185,22 @@ int HinDevImpl::workThread()
                 }
             }
             if (!showPqFrame && mState == START) {
+                if (mPcieState == PCIE_STATE_STREAM_TRANS && mTvPcieRc) {
+                    mTvPcieRc->setDebugLevel(mDebugLevel);
+                    Mutex::Autolock autoLock(mPcieBufLock);
+                    initPcieBuf(PCIE_TV_BUF_CNT);
+                    DEBUG_PRINT(mDebugLevel, "enter mBufferLock pcieMode=%d", mPcieMode);
+                    for (int i = 0; i < mPcieBufPrepareList.size(); i++) {
+                        int pcieBufIndex = mPcieBufPrepareList[i];
+                        if (!mPcieBufList[pcieBufIndex].isFilled) {
+                            mPcieBufList[pcieBufIndex].srcHandle = mHinNodeInfo->vt_buffers[currDqbufHandleIndex]->handle;
+                            mPcieBufList[pcieBufIndex].isFilled = true;
+                            DEBUG_PRINT(mDebugLevel, "===find mPcieBufferList listIndex=%d, pcieBufIndex=%d, currDqbufHandleIndex=%d start buffDataTransfer",
+                                i, pcieBufIndex, currDqbufHandleIndex);
+                            break;
+                        }
+                    }
+                }
                 DEBUG_PRINT(mDebugLevel, "sidebandwindow show index=%d", currDqbufHandleIndex);
                 showVTunnel(mHinNodeInfo->vt_buffers[currDqbufHandleIndex]);
             }
@@ -2118,6 +2301,22 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
         }
         mQbufCount--;
 
+        if (mPcieMode == PCIE_EP) {
+            if (mTvPcieEp) {
+                if (mState != START) {
+                    ALOGE("%s ep mState=%d, not do qBuf", __FUNCTION__, mState);
+                    return;
+                }
+                for (int i=0; i<mBufferCount; i++) {
+                    if (vtDqbufFd == mHinNodeInfo->vt_buffers[i]->handle->data[0]) {
+                        DEBUG_PRINT(mDebugLevel, "qBuf to pcie ep index=%d, fd=%d", i, vtDqbufFd);
+                        mTvPcieEp->qBuf(mHinNodeInfo->vt_buffers[i]->handle);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
         if (qBuf(vtDqbufFd, false)) {
             return;
         }
@@ -2154,6 +2353,265 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
             return;
         }
     }
+}
+
+NotifyTvPcieEpCallback tvPcieEpCallback(void* context, int cmd) {
+    DEBUG_PRINT(3, "");
+    if (context) {
+        HinDevImpl* hinDevImpl = (HinDevImpl*)context;
+        if (hinDevImpl->mNotifyTvPcieCb) {
+            pcie_user_cmd_st cmd_st;
+            memset(&cmd_st, 0, sizeof(cmd_st));
+            cmd_st.cmd = cmd;
+            hinDevImpl->mNotifyTvPcieCb(cmd_st);
+        }
+    }
+    return 0;
+}
+
+void HinDevImpl::setTvPcieCallback(NotifyTvPcieCallback callback) {
+    mNotifyTvPcieCb = callback;
+}
+
+void HinDevImpl::setInDevConnected(bool isConnected) {
+    mIsHdmiIn = isConnected;
+}
+
+int HinDevImpl::initPcieBuf(int bufNum) {
+    if (mPcieBufList.empty()) {
+        DEBUG_PRINT(3, "start bufNum=%d", bufNum);
+        mPcieBufList.resize(bufNum);
+        if (!mPcieBufPrepareList.empty()) {
+            DEBUG_PRINT(3, "clear mPcieBufPrepareList");
+            mPcieBufPrepareList.clear();
+        }
+        for (int i=0; i<mPcieBufList.size(); i++) {
+            mSidebandWindow->allocateBuffer(&mPcieBufList[i].out_vt_buffer,
+                    mSrcFrameWidth, mSrcFrameHeight, getNativeWindowFormat(mPixelFormat),
+                    RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
+            mPcieBufPrepareList.push_back(i);
+        }
+        DEBUG_PRINT(3, "end");
+    }
+
+    return 0;
+}
+
+void HinDevImpl::markPcieEpNeedRestart(int cmd) {
+    if (mTvPcieRc) {
+        mTvPcieRc->markEpNeedRestart(cmd);
+    }
+}
+
+int HinDevImpl::pcieEpFindDevice(int& width, int& height, int& pixelFormat) {
+    DEBUG_PRINT(3, "start pcie state=%d, pcieEp=%d", mPcieState, mTvPcieEp != NULL);
+    int ret = -1;
+    if (mTvPcieEp && mPcieState == PCIE_STATE_STREAM_TRANS) {
+        mTvPcieEp->stop();
+        mPcieState = PCIE_STATE_WAIT_DEV_INIT;
+        if (mPcieThread) {
+            DEBUG_PRINT(3, "pcie thread start exit");
+            mPcieThread->requestExit();
+            mPcieThread.clear();
+            mPcieThread = nullptr;
+            DEBUG_PRINT(3, "pcie thread end exit");
+        }
+        mTvPcieEp = nullptr;
+        usleep(10000);
+    }
+    if (mTvPcieEp == NULL) {
+        mTvPcieEp = new TvPcieEp();
+        mPcieState = PCIE_STATE_WAIT_DEV_INIT;
+        ret = mTvPcieEp->init((NotifyTvPcieEpCallback)tvPcieEpCallback, this);
+        DEBUG_PRINT(3, "ep init end, ret=%d", ret);
+        if (ret == 0) {
+            setInDevConnected(false);
+            mPcieState = PCIE_STATE_WAIT_CONNECT;
+            DEBUG_PRINT(3, "set pcie state=%d", mPcieState);
+            mPcieThread = new PcieThread(this);
+        } else {
+            mTvPcieEp->stop();
+        }
+    } else {
+        mPcieState = PCIE_STATE_WAIT_DEV_INIT;
+        DEBUG_PRINT(3, "reset pcie state=%d with last pcie not null", mPcieState);
+    }
+    DEBUG_PRINT(3, "end ret=%d", ret);
+    return ret;
+}
+
+int HinDevImpl::pcieEpCheckTvHalInit(int timeout_ms) {
+    int ret = -1;
+    if (mTvPcieEp == NULL) {
+        DEBUG_PRINT(3, "start, but pcieEp is NULL");
+        return ret;
+    }
+
+    DEBUG_PRINT(3, "start");
+    int inDevConnected = 0;
+    while (true) {
+        if (mPcieStop) {
+            DEBUG_PRINT(3, "pcie is stop, force return");
+            return -1;
+        }
+        ret = mTvPcieEp->waitRcMsg(timeout_ms, E_TASK_MSG_USER, PCIE_CMD_HDMIIN_INIT);
+        if (ret == 0) {
+            mTvPcieEp->getInputInfo(mSrcFrameWidth, mSrcFrameHeight, mPixelFormat, inDevConnected);
+            break;
+        } else {
+            DEBUG_PRINT(3, "wait PCIE_CMD_HDMIIN_INIT failed, try again");
+            usleep(1000);
+        }
+    }
+    setInDevConnected(inDevConnected);
+    mPcieState = PCIE_STATE_WAIT_REQ;
+    DEBUG_PRINT(3, "%dx%d format=%d, inDevConnect=%d, set pcie state=%d",
+        mSrcFrameWidth, mSrcFrameHeight, mPixelFormat, inDevConnected, mPcieState);
+    while (mPcieEpTvInitRet == -1) {
+        if (mPcieStop) {
+            DEBUG_PRINT(3, "pcie is stop, force return");
+            return -1;
+        }
+        usleep(10000);
+    }
+    DEBUG_PRINT(3, "check pcieEpTvInitRet=%d, ret=%d, pcie state=%d", mPcieEpTvInitRet, ret, mPcieState);
+    if (mPcieEpTvInitRet == 0) {
+        pcieEpRestart();
+    }
+    return ret;
+}
+
+void HinDevImpl::pcieEpRestart() {
+    if (mNotifyTvPcieCb != NULL) {
+        DEBUG_PRINT(3, "inDevConnect=%d", mIsHdmiIn);
+        pcie_user_cmd_st cmd_st;
+        memset(&cmd_st, 0, sizeof(cmd_st));
+        cmd_st.cmd = PCIE_CMD_HDMIIN_SOURCE_CHANGE;
+        cmd_st.inDevConnected = true;//inDevConnected;
+        cmd_st.frameWidth = mSrcFrameWidth;
+        cmd_st.frameHeight = mSrcFrameHeight;
+        cmd_st.framePixelFormat = mPixelFormat;
+        mNotifyTvPcieCb(cmd_st);
+    }
+}
+
+int HinDevImpl::pcieThread() {
+    if (mPcieStop) {
+        DEBUG_PRINT(3, "exit thread due to pcie stop, currentState=%d", mPcieState);
+        return UNKNOWN_ERROR;
+    }
+
+    if (mPcieState < PCIE_STATE_WAIT_REQ) {
+        DEBUG_PRINT(3, "pcieThread pcie State=%d", mPcieState);
+    }
+    int ret = -1;
+    if (mPcieState == PCIE_STATE_WAIT_DEV_INIT) {
+        if (mTvPcieRc) {
+            ret = mTvPcieRc->init(mSrcFrameWidth, mSrcFrameHeight);
+            if (ret == 0) {
+                mPcieState = PCIE_STATE_WAIT_CONNECT;
+            } else {
+                mTvPcieRc->stop();
+                DEBUG_PRINT(3, "exit thread due to pcie rc init failed");
+                return UNKNOWN_ERROR;
+            }
+        }
+    }
+    if (mPcieState == PCIE_STATE_WAIT_CONNECT) {
+        if (mTvPcieRc) {
+            int time_out_ms = 1000;
+            ret = mTvPcieRc->connect(time_out_ms);
+            if (mPcieStop) {
+                DEBUG_PRINT(3, "exit thread due to pcie stop, currentState=%d", mPcieState);
+                return UNKNOWN_ERROR;
+            }
+            if (ret == 0) {
+                pcie_user_cmd_st cmd_msg;
+                memset(&cmd_msg, 0, sizeof(cmd_msg));
+                cmd_msg.cmd = PCIE_CMD_HDMIIN_INIT;
+                cmd_msg.frameWidth = mSrcFrameWidth;
+                cmd_msg.frameHeight = mSrcFrameHeight;
+                cmd_msg.framePixelFormat = mPixelFormat;
+                cmd_msg.inDevConnected = mIsHdmiIn;
+                DEBUG_PRINT(3, "send PCIE_CMD_HDMIIN_INIT %dx%d pixel=%d, inDevConnected=%d",
+                    cmd_msg.frameWidth, cmd_msg.frameHeight, cmd_msg.frameHeight, cmd_msg.inDevConnected);
+                ret = mTvPcieRc->sendMsgToEp(cmd_msg);
+                if (ret == 0) {
+                    mPcieState = PCIE_STATE_WAIT_REQ;
+                } else {
+                    DEBUG_PRINT(3, "exit thread due to sendMsgToEp fail, ret=%d", ret);
+                    return UNKNOWN_ERROR;
+                }
+            }
+        } else if (mTvPcieEp) {
+            int time_out_ms = 1000;
+            ret = mTvPcieEp->connect(time_out_ms);
+            if (mPcieStop) {
+                DEBUG_PRINT(3, "exit thread due to pcie stop, currentState=%d", mPcieState);
+                return UNKNOWN_ERROR;
+            }
+            if (ret == 0) {
+                ret = pcieEpCheckTvHalInit(100);
+                DEBUG_PRINT(3, "pcieEpCheckTvHalInit ret=%d", ret);
+                if (ret == 0) {
+                    DEBUG_PRINT(3, "start check rc exit");
+                    return NO_ERROR;
+                }
+                DEBUG_PRINT(3, "exit thread due to pcieEpCheckTvHalInit failed, currentState=%d", mPcieState);
+                return UNKNOWN_ERROR;
+            }
+        }
+    }
+    if (mPcieState == PCIE_STATE_WAIT_REQ) {
+        if (mTvPcieRc) {
+            //wait ep rev init msg
+            if (!mTvPcieRc->isMsgNotRecv()) {
+                mPcieState = PCIE_STATE_STREAM_TRANS;
+                DEBUG_PRINT(3, "get ep success, set rc pcie state %d", mPcieState);
+            }
+        }
+    }
+    if (mPcieState == PCIE_STATE_STREAM_TRANS && mTvPcieRc && mState == START) {
+        bool isEpExit = mTvPcieRc->isEpExit();
+        if (isEpExit) {
+            DEBUG_PRINT(3, "===============find ep exit================rc stop for reconnect");
+            mTvPcieRc->stop();
+            if (mPcieStop) {
+                DEBUG_PRINT(3, "exit thread due to pcie stop, currentState=%d", mPcieState);
+                return UNKNOWN_ERROR;
+            }
+            usleep(100000);
+            mTvPcieRc->rescan_device();
+            mPcieState = PCIE_STATE_WAIT_DEV_INIT;
+            return NO_ERROR;
+        }
+
+        int pcieBufIndex = -1;
+        if (!mPcieBufPrepareList.empty()) {
+            pcieBufIndex = mPcieBufPrepareList[0];
+            if (mPcieBufList[pcieBufIndex].isFilled) {
+                mTvPcieRc->sendStreamToEp(mPcieBufList[pcieBufIndex].srcHandle);
+            } else {
+                pcieBufIndex = -1;
+            }
+        }
+        if (pcieBufIndex != -1) {
+            Mutex::Autolock autoLock(mPcieBufLock);
+            mPcieBufPrepareList.erase(mPcieBufPrepareList.begin());
+            mPcieBufList[pcieBufIndex].isFilled = false;
+            mPcieBufPrepareList.push_back(pcieBufIndex);
+        }
+    } else if (mPcieState == PCIE_STATE_STREAM_TRANS && mTvPcieEp) {
+        mTvPcieEp->setDebugLevel(mDebugLevel);
+        if (mTvPcieEp->isRcExit()) {
+            DEBUG_PRINT(3, "===============find rc exit================");
+            pcieEpRestart();
+            return UNKNOWN_ERROR;
+        }
+    }
+    usleep(1000);
+
+    return NO_ERROR;
 }
 
 int HinDevImpl::pqBufferThread() {

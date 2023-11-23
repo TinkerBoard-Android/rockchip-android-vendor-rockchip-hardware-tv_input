@@ -310,6 +310,10 @@ status_t RTSidebandWindow::cancelBuffer(vt_buffer_t *buffer) {
     }
     mRenderingCnt++;
 
+    if (buffer == NULL) {
+        ALOGE("%s =========NULL buffer not do rk_vt_cancel_buffer============", __FUNCTION__);
+        return -1;
+    }
     return rk_vt_cancel_buffer(mVTDevFd, mVTID, buffer);
 }
 
@@ -523,23 +527,28 @@ int RTSidebandWindow::buffDataTransfer2(buffer_handle_t srcHandle, buffer_handle
     if (srcHandle && dstHandle) {
         unsigned char* tmpSrcPtr = NULL;
         unsigned char* tmpDstPtr = NULL;
-        int srcDatasize = -1;
         int lockMode = GRALLOC_USAGE_SW_READ_MASK | GRALLOC_USAGE_SW_WRITE_MASK | GRALLOC_USAGE_HW_CAMERA_MASK;
-        mBuffMgr->Lock(srcHandle, lockMode, 0, 0, mBuffMgr->GetWidth(srcHandle), mBuffMgr->GetHeight(srcHandle), (void**)&tmpSrcPtr);
+        int width = mBuffMgr->GetWidth(srcHandle);
+        int height = mBuffMgr->GetHeight(srcHandle);
+        mBuffMgr->LockLocked(srcHandle, lockMode, 0, 0, width, height, (void**)&tmpSrcPtr);
+        int srcDatasize = 0;
         for (int i = 0; i < mBuffMgr->GetNumPlanes(srcHandle); i++) {
             srcDatasize += mBuffMgr->GetPlaneSize(srcHandle, i);
         }
-        mBuffMgr->LockLocked(dstHandle, lockMode, 0, 0, mBuffMgr->GetWidth(dstHandle), mBuffMgr->GetHeight(dstHandle), (void**)&tmpDstPtr);
-        int dstDatesize = -1;
+        //DEBUG_PRINT(3, "%s src %dx%d, datasize=%d", __func__, width, height, srcDatasize);
+        width = mBuffMgr->GetWidth(dstHandle);
+        height = mBuffMgr->GetHeight(dstHandle);
+        mBuffMgr->LockLocked(dstHandle, lockMode, 0, 0, width, height, (void**)&tmpDstPtr);
+        int dstDatasize = 0;
         for (int i = 0; i < mBuffMgr->GetNumPlanes(dstHandle); i++) {
-            dstDatesize += mBuffMgr->GetPlaneSize(dstHandle, i);
+            dstDatasize += mBuffMgr->GetPlaneSize(dstHandle, i);
         }
-        //ALOGD("%s %d %d", __FUNCTION__, srcDatasize, dstDatesize);
+        //DEBUG_PRINT(3, "%s dst %dx%d, datasize=%d", __func__, width, height, dstDatasize);
 
-        std::memcpy(tmpDstPtr, tmpSrcPtr, dstDatesize);
+        std::memcpy(tmpDstPtr, tmpSrcPtr, srcDatasize);
 
         mBuffMgr->UnlockLocked(dstHandle);
-        mBuffMgr->Unlock(srcHandle);
+        mBuffMgr->UnlockLocked(srcHandle);
 
         return 0;
     }

@@ -15,6 +15,11 @@
  */
 
 #ifndef HAL_ROCKCHIP_PSL_RKISP1_RGACROPSCALE_H_
+
+#include <stdint.h>
+
+typedef uint64_t     UINT64;
+
 namespace android {
 namespace tvinput {
 
@@ -37,6 +42,9 @@ class RgaCropScale {
         bool mirror;
     };
 
+    static int rga_copy(int src_fd, void* src_vir_addr, uint64_t src_phy_addr,
+        int src_width, int src_height, int src_format,
+        int dst_fd, void* dst_vir_addr, uint64_t dst_phy_addr);
     static int CropScaleNV12Or21(struct Params* in, struct Params* out);
     static int rga_nv12_scale_crop(
 		int src_width, int src_height,

@@ -44,6 +44,8 @@
 #include "common/rk-camera-module.h"
 #include <rkpq.h>
 #include "rkiep.h"
+#include "pcie/TvPcieRc.h"
+#include "pcie/TvPcieEp.h"
 
 #ifdef LOG_TAG
 #undef LOG_TAG
@@ -132,6 +134,8 @@ typedef void (*app_data_callback)(void *user, source_buffer_info_t *buff_info);
 
 typedef void (*NotifyCommandCallback)(tv_input_command command);
 
+typedef void (*NotifyTvPcieCallback)(pcie_user_cmd_st cmd);
+
 #define HIN_GRALLOC_USAGE  GRALLOC_USAGE_HW_TEXTURE | \
                                     GRALLOC_USAGE_HW_RENDER | \
                                     GRALLOC_USAGE_SW_READ_RARELY | \
@@ -178,13 +182,18 @@ class HinDevImpl {
         bool check_zme(int src_width, int src_height, int* dst_width, int* dst_height);
         int check_interlaced();
         void set_interlaced(int interlaced);
+        void setTvPcieCallback(NotifyTvPcieCallback callback);
+        void setInDevConnected(bool isConnected);
+        void markPcieEpNeedRestart(int cmd);
 
         const tv_input_callback_ops_t* mTvInputCB;
+        NotifyTvPcieCallback mNotifyTvPcieCb = NULL;
 
     private:
         int workThread();
         int pqBufferThread();
         int iepBufferThread();
+        int pcieThread();
         int getPqFmt(int V4L2Fmt);
         void initPqInfo(int pqMode, int hdmi_range_mode);
         // int previewBuffThread();
@@ -198,6 +207,10 @@ class HinDevImpl {
         void showVTunnel(vt_buffer_t* vt_buffer);
         bool needShowPqFrame(int pqMode);
         bool qBuf(int fd, bool noFoundLog);
+        int initPcieBuf(int bufNum);
+        int pcieEpFindDevice(int& width, int& height, int& pixelFormat);
+        int pcieEpCheckTvHalInit(int wait_timeout_ms);
+        void pcieEpRestart();
     private:
         class WorkThread : public Thread {
             HinDevImpl* mSource;
@@ -243,6 +256,19 @@ class HinDevImpl {
                 }
         };
 
+        class PcieThread : public Thread {
+            HinDevImpl* mSource;
+            public:
+                PcieThread(HinDevImpl* source) :
+                    Thread(false), mSource(source) { }
+                virtual void onFirstRef() {
+                    run("tif pcie thread", PRIORITY_URGENT_DISPLAY);
+                }
+                virtual bool threadLoop() {
+                    return mSource->pcieThread() == NO_ERROR;
+                }
+        };
+
         // class PreviewBuffThread : public Thread {
         //     HinDevImpl* mSource;
         //     public:
@@ -278,7 +304,7 @@ class HinDevImpl {
         int m_rest = 0;
         int m_displaymode;
         volatile int mState;
-        NotifyQueueDataCallback mNotifyQueueCb;
+        NotifyQueueDataCallback mNotifyQueueCb = NULL;
         NotifyCommandCallback mNotifyCommandCb = NULL;
         int mPixelFormat;
         int mNativeWindowPixelFormat;
@@ -303,7 +329,7 @@ class HinDevImpl {
         int mFrameType;
         bool mOpen;
         int mDebugLevel;
-        int mSkipFrame;
+        int mSkipFrame = 0;
         int mDumpFrameCount;
         void *mUser;
         bool mV4L2DataFormatConvert;
@@ -343,5 +369,15 @@ class HinDevImpl {
         struct v4l2_plane mCurrentPlanes;
         struct v4l2_buffer mCurrentBufferArray;
         int mMedianBlurMode = 0;
+        int mPcieMode = PCIE_DISABLE;
+        sp<TvPcieEp> mTvPcieEp = nullptr;
+        sp<TvPcieRc> mTvPcieRc = nullptr;
+        sp<PcieThread> mPcieThread = nullptr;
+        int mPcieState = PCIE_STATE_UNSET;
+        bool mPcieStop = false;
+        int mPcieEpTvInitRet = -1;//0:init failed, 1:init success
+        std::vector<tv_pq_buffer_info_t> mPcieBufList;
+        std::vector<int> mPcieBufPrepareList;
+        Mutex mPcieBufLock;
         // std::vector<tv_input_preview_buff_t> mPreviewBuff;
 };
