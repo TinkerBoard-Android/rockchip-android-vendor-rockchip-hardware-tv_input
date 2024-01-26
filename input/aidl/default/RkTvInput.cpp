@@ -103,6 +103,10 @@ V4L2EventCallBack hinDevEventCallback(int event_type) {
                     std::map<std::string, std::string> data;
                     s_TvInputPriv->mDev->deal_priv_message("hdmiinout", data);
                     sendTvMessage("hdmiinout", STREAM_ID_HDMIIN);
+                    /*
+                     * tell AudioPreviewThread to stop when we can not get hdmiin
+                     */
+                    sendTvMessage("audio_present=0", STREAM_ID_HDMIIN);
                 }
             }
             break;
@@ -126,6 +130,14 @@ V4L2EventCallBack hinDevEventCallback(int event_type) {
                 sendTvMessage("hdmiinout", STREAM_ID_HDMIIN);
             }
             break;
+        case RK_HDMIRX_V4L2_EVENT_AUDIOINFO:
+            if (s_TvInputPriv->mDev && s_TvInputPriv->mDev->started()) {
+                int present = s_TvInputPriv->mDev->get_HdmiAudioPresent();
+                char audio_present[16];
+                sprintf(audio_present, "audio_present=%d", present);
+                sendTvMessage(audio_present, STREAM_ID_HDMIIN);
+             }
+             break;
         case CMD_HDMIIN_RESET:
             sendTvMessage("hdmiinreset", STREAM_ID_HDMIIN);
             //s_TvInputPriv->mDev->send_ep_stream(PCIE_CMD_HDMIIN_RESET, NULL);
@@ -349,6 +361,8 @@ void RkTvInput::init() {
         }*/
         out_buffer = native_handle_clone(s_TvInputPriv->mDev->getSindebandBufferHandle());
         s_TvInputPriv->mDev->start();
+        /*update audio info when open*/
+        hinDevEventCallback(RK_HDMIRX_V4L2_EVENT_AUDIOINFO);
         mStreamConfigs[deviceId][streamId]->handle = out_buffer;
         //*_aidl_return = makeToAidl(mStreamConfigs[deviceId][streamId]->handle);
         _aidl_return->push_back(makeToAidl(mStreamConfigs[deviceId][streamId]->handle));

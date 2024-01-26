@@ -154,12 +154,14 @@ class HinDevImpl {
         ~HinDevImpl();
         int init(int id,int type, int& initWidth, int& initHeight,int& initFormat);
         int findDevice(int id, int& initWidth, int& initHeight,int& initFormat);
+        bool started();
         int start();
         int stop();
         int pause();
         int get_csi_format(int fd, int &hdmi_in_width, int &hdmi_in_height,int& initFormat);
 	int get_format(int fd, int &hdmi_in_width, int &hdmi_in_height,int& initFormat);
         int set_format(int width = 640, int height = 480, int color_format = V4L2_PIX_FMT_NV21);
+        int get_HdmiAudioPresent();
         int get_HdmiIn(bool enforce);
         int set_crop(int x, int y, int width, int height);
         int set_preview_info(int top, int left, int width, int height);

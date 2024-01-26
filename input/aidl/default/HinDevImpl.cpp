@@ -51,6 +51,8 @@
 #endif
 
 #define V4L2_ROTATE_ID 0x980922
+#define V4L2_CID_USER_RK_BASE (V4L2_CID_USER_BASE + 0x1080)
+#define RK_V4L2_CID_AUDIO_PRESENT (V4L2_CID_USER_RK_BASE + 0x101)
 
 #ifndef container_of
 #define container_of(ptr, type, member) ({                      \
@@ -748,6 +750,11 @@ int HinDevImpl::stop_device()
     return ret;
 }
 
+bool HinDevImpl::started()
+{
+    return mOpen;
+}
+
 int HinDevImpl::start()
 {
     if (mPcieMode == PCIE_EP && mPcieState != PCIE_STATE_STREAM_TRANS) {
@@ -1104,6 +1111,22 @@ int HinDevImpl::get_extfmt_info() {
         DEBUG_PRINT(3, "[%s %d] RK_HDMIRX_CMD_GET_COLOR_SPACE %d", __FUNCTION__, __LINE__, mFrameColorSpace);
     }
     return err;
+}
+
+int HinDevImpl::get_HdmiAudioPresent()
+{
+    struct v4l2_control control;
+    int present = 0;
+    memset(&control, 0, sizeof(struct v4l2_control));
+    control.id = RK_V4L2_CID_AUDIO_PRESENT;
+    int err = ioctl(mHinDevEventHandle, VIDIOC_G_CTRL, &control);
+    if (err < 0) {
+        ALOGE("get_HdmiAudioPresent failed ,%d(%s)", errno, strerror(errno));
+        return UNKNOWN_ERROR;
+    }
+    present = control.value;
+    DEBUG_PRINT(3, "get_HdmiAudioPresent : %d.", present);
+    return present;
 }
 
 int HinDevImpl::get_HdmiIn(bool enforce){
