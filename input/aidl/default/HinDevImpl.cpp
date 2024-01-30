@@ -296,8 +296,16 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
     info.left = 0;
     info.width = mSrcFrameWidth;
     info.height = mSrcFrameHeight;
-    info.usage = STREAM_BUFFER_GRALLOC_USAGE;
+    memset(prop_value, '\0', sizeof(prop_value));
+    property_get(SOC_PRODUCT, prop_value, "");
+    DEBUG_PRINT(3, "soc %s=%s", SOC_PRODUCT, prop_value);
+    if (strcmp(prop_value, "rk3576") == 0) {
+        info.usage = STREAM_BUFFER_GRALLOC_USAGE;
+    } else {
+        info.usage = STREAM_BUFFER_GRALLOC_USAGE_CMA;
+    }
     if (initType == TV_STREAM_TYPE_INDEPENDENT_VIDEO_SOURCE) {
+        memset(prop_value, '\0', sizeof(prop_value));
         property_get(SIDEBAND_MODE_TYPE, prop_value, "0");
         if (0 == strcmp(prop_value, "0")) {
             mFrameType |= TYPE_SIDEBAND_WINDOW;

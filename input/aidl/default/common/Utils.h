@@ -79,6 +79,10 @@ enum DisplayRatio{
 #define CMD_HDMIIN_RESET 0x1001
 
 static const int64_t STREAM_BUFFER_GRALLOC_USAGE = (
+    GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN
+);
+
+static const int64_t STREAM_BUFFER_GRALLOC_USAGE_CMA = (
     GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN |
     RK_GRALLOC_USAGE_WITHIN_4G | RK_GRALLOC_USAGE_PHY_CONTIG_BUFFER
 );
@@ -104,6 +108,7 @@ static const int64_t STREAM_BUFFER_GRALLOC_USAGE = (
 #define TV_INPUT_PCIE_MODE "tvinput.hdmiin.pcie_mode"
 
 #define SIDEBAND_MODE_TYPE "vendor.hwc.enable_sideband_stream_2_mode"
+#define SOC_PRODUCT "ro.board.platform"
 
 #define DEBUG_PRINT(level, fmt, arg...)                       \
     do {                                                      \
