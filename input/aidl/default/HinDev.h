@@ -211,6 +211,8 @@ class HinDevImpl {
         int pcieEpFindDevice(int& width, int& height, int& pixelFormat);
         int pcieEpCheckTvHalInit(int wait_timeout_ms);
         void pcieEpRestart();
+        void query_fps_info();
+        void waitFence(const char* log_tag, int &fence_fd);
     private:
         class WorkThread : public Thread {
             HinDevImpl* mSource;

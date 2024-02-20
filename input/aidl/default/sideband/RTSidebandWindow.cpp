@@ -159,7 +159,7 @@ status_t RTSidebandWindow::getAttr(vt_win_attr_t *info) {
 }
 
 status_t RTSidebandWindow::allocateSidebandHandle(buffer_handle_t *handle,
-        int VTId) {
+        int VTId, int fps) {
     native_handle_t *temp_buffer = NULL;
     vt_sideband_data_t info;
 
@@ -180,6 +180,7 @@ status_t RTSidebandWindow::allocateSidebandHandle(buffer_handle_t *handle,
     info.data_space     = mSidebandInfo.data_space;
     info.compress_mode  = mSidebandInfo.compress_mode;
     info.session_id     = g_session_id;
+    info.fps            = fps;
 
     temp_buffer = native_handle_create(0, sizeof(vt_sideband_data_t) / sizeof(int));
     temp_buffer->version = sizeof(native_handle_t);

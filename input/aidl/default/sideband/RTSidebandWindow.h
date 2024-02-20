@@ -75,7 +75,7 @@ class RTSidebandWindow : public RefBase, IMessageHandler {
     status_t dequeueBuffer(vt_buffer_t **buffer, int timeout_ms, int *fence);
     status_t queueBuffer(vt_buffer_t *buffer, int fence, int64_t expected_present_time);
     status_t cancelBuffer(vt_buffer_t *buffer);
-    status_t allocateSidebandHandle(buffer_handle_t *handle, int VTId);
+    status_t allocateSidebandHandle(buffer_handle_t *handle, int VTId, int fps);
     status_t allocateBuffer(vt_buffer_t **buffer,
         int32_t width, int32_t height, int32_t format, uint64_t usage);
     status_t freeBuffer(vt_buffer_t **buffer);

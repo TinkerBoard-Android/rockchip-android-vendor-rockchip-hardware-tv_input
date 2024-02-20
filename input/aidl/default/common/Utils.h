@@ -99,7 +99,7 @@ static const int64_t STREAM_BUFFER_GRALLOC_USAGE_CMA = (
 #define TV_INPUT_RESOLUTION_MAIN "persist.vendor.resolution.main"
 #define TV_INPUT_OVERSCAN_PREF "persist.vendor.overscan."
 #define TV_INPUT_HDMI_RANGE "persist.vendor.tvinput.rkpq.range"
-#define TV_INPUT_HDMIIN_TYPE "vendor.tvinput.hdmiin.type"
+#define TV_INPUT_HDMIIN_TYPE "tvinput.hdmiin.type"
 #define TV_INPUT_DISPLAY_RATIO "vendor.tvinput.displayratio"
 #define TV_INPUT_DEBUG_LEVEL "vendor.tvinput.debug.level"
 #define TV_INPUT_DEBUG_DUMP "vendor.tvinput.debug.dump"

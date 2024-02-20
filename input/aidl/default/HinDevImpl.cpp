@@ -38,6 +38,7 @@
 #include <sys/stat.h>
 
 #include "HinDev.h"
+#include <ui/Fence.h>
 #include <ui/GraphicBufferMapper.h>
 #include <ui/GraphicBuffer.h>
 #include <linux/videodev2.h>
@@ -98,6 +99,9 @@ static size_t getBufSize(int format, int width, int height)
         case V4L2_PIX_FMT_BGR24:
             buf_size = width * height * 3;
             break;
+        case V4L2_PIX_FMT_RGB24:
+            buf_size = width * height * 3;
+            break;
         case V4L2_PIX_FMT_RGB32:
             buf_size = width * height * 4;
             break;
@@ -127,6 +131,9 @@ static int  getNativeWindowFormat(int format)
             break;
         case V4L2_PIX_FMT_BGR24:
             nativeFormat = HAL_PIXEL_FORMAT_BGR_888;
+            break;
+        case V4L2_PIX_FMT_RGB24:
+            nativeFormat = HAL_PIXEL_FORMAT_RGB_888;
             break;
         case V4L2_PIX_FMT_RGB32:
             nativeFormat = HAL_PIXEL_FORMAT_RGBA_8888;
@@ -347,7 +354,7 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
         mBufferCount = APP_PREVIEW_BUFF_CNT;
     }
     if (mHdmiInType == HDMIIN_TYPE_MIPICSI) {
-        info.usage |= RK_GRALLOC_USAGE_ALLOC_HEIGHT_ALIGN_16;
+        //info.usage |= RK_GRALLOC_USAGE_ALLOC_HEIGHT_ALIGN_16;
         if (mFrameType & TYPE_SIDEBAND_WINDOW) {
             info.usage |= GRALLOC_USAGE_HW_COMPOSER
                 | RK_GRALLOC_USAGE_STRIDE_ALIGN_64;
@@ -581,6 +588,7 @@ int HinDevImpl::findDevice(int id, int& initWidth, int& initHeight,int& initForm
 }
 int HinDevImpl::makeHwcSidebandHandle() {
     ALOGW("%s %d", __FUNCTION__, __LINE__);
+    query_fps_info();
     buffer_handle_t buffer = NULL;
     if (mFrameType & TYPE_SIDEBAND_WINDOW) {
         mSidebandWindow->allocateSidebandHandle(&buffer, mDstFrameWidth, mDstFrameHeight, -1, RK_GRALLOC_USAGE_STRIDE_ALIGN_64);
@@ -588,8 +596,8 @@ int HinDevImpl::makeHwcSidebandHandle() {
         if (mPcieMode == PCIE_EP && mPcieState != PCIE_STATE_STREAM_TRANS) {
             DEBUG_PRINT(3, "pcieEp unInit, will allocate imitate data");
         }
-        mSidebandWindow->allocateSidebandHandle(&buffer, -1);
-        mSidebandWindow->allocateSidebandHandle(&mSidebandCancelHandle, 0);
+        mSidebandWindow->allocateSidebandHandle(&buffer, -1, mFrameFps);
+        mSidebandWindow->allocateSidebandHandle(&mSidebandCancelHandle, 0, 0);
     }
     if (!buffer) {
         DEBUG_PRINT(3, "allocate buffer from sideband window failed!");
@@ -764,6 +772,10 @@ int HinDevImpl::start()
     } else if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
         mSidebandWindow->allocateBuffer(&mSignalVTBuffer, mDstFrameWidth, mDstFrameHeight,
             HAL_PIXEL_FORMAT_BGR_888, RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
+        if (mSignalVTBuffer) {
+            mSignalVTBuffer->rdy_render_fence_fd = -1;
+            mSignalVTBuffer->fence_fd = -1;
+        }
     } else if (mFrameType & TYPE_STREAM_BUFFER_PRODUCER) {
         mSidebandWindow->allocateSidebandHandle(&mSignalHandle, mSrcFrameWidth, mSrcFrameHeight,
             HAL_PIXEL_FORMAT_BGR_888, RK_GRALLOC_USAGE_STRIDE_ALIGN_64);
@@ -1005,6 +1017,8 @@ int HinDevImpl::get_csi_format(int fd, int &hdmi_in_width, int &hdmi_in_height,i
             mPixelFormat = V4L2_PIX_FMT_NV16;
         } else if (format.format.code == MEDIA_BUS_FMT_BGR888_1X24) {
             mPixelFormat = V4L2_PIX_FMT_BGR24;
+        } else if (format.format.code == MEDIA_BUS_FMT_RGB888_1X24) {
+            mPixelFormat = V4L2_PIX_FMT_RGB24;
         } else {
             mPixelFormat = format.format.code;
         }
@@ -1061,16 +1075,20 @@ int HinDevImpl::get_format(int fd, int &hdmi_in_width, int &hdmi_in_height,int& 
     return -1;
 }
 
-int HinDevImpl::get_extfmt_info() {
+void HinDevImpl::query_fps_info() {
     int err = ioctl(mHinDevHandle, RK_HDMIRX_CMD_GET_FPS, &mFrameFps);
     if (err < 0) {
-        DEBUG_PRINT(3, "[%s %d] failed, RK_HDMIRX_CMD_GET_FPS %d, %s", __FUNCTION__, __LINE__, err, strerror(err));
+        DEBUG_PRINT(3, "failed, RK_HDMIRX_CMD_GET_FPS %d, %s", err, strerror(err));
         mFrameFps = 60;
     } else {
-        DEBUG_PRINT(3, "[%s %d] RK_HDMIRX_CMD_GET_FPS %d", __FUNCTION__, __LINE__, mFrameFps);
+        DEBUG_PRINT(3, "RK_HDMIRX_CMD_GET_FPS %d", mFrameFps);
     }
+}
 
-    err = ioctl(mHinDevHandle, RK_HDMIRX_CMD_GET_COLOR_RANGE, &mFrameColorRange);
+int HinDevImpl::get_extfmt_info() {
+    query_fps_info();
+
+    int err = ioctl(mHinDevHandle, RK_HDMIRX_CMD_GET_COLOR_RANGE, &mFrameColorRange);
     if (err < 0) {
         DEBUG_PRINT(3, "[%s %d] failed, RK_HDMIRX_CMD_GET_COLOR_RANGE %d, %s", __FUNCTION__, __LINE__, err, strerror(err));
         mFrameColorRange = HDMIRX_DEFAULT_RANGE;
@@ -1618,7 +1636,8 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
         }
 
         int color_space = 0;
-        if (getPqFmt(mPixelFormat) == RKPQ_IMG_FMT_BG24) {
+        if (getPqFmt(mPixelFormat) == RKPQ_IMG_FMT_BG24
+                || getPqFmt(mPixelFormat) == RKPQ_IMG_FMT_RG24) {
             if(hdmi_range_mode == 2){//force limit
                 color_space = RKPQ_CLR_SPC_RGB_LIMITED;
             }else if (hdmi_range_mode == 1){//force full
@@ -1706,6 +1725,8 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                             HAL_PIXEL_FORMAT_YCBCR_444_888,
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
                     }
+                    mPqBufferHandle[i].out_vt_buffer->rdy_render_fence_fd = -1;
+                    mPqBufferHandle[i].out_vt_buffer->fence_fd = -1;
                     mPqPrepareList.push_back(i);
                 }
             }
@@ -1726,12 +1747,16 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                         mSidebandWindow->allocateBuffer(&mIepBufferHandle[i].out_vt_buffer, mDstFrameWidth, mDstFrameHeight,
                             HAL_PIXEL_FORMAT_YCbCr_422_SP,
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
+                        mIepBufferHandle[i].out_vt_buffer->rdy_render_fence_fd = -1;
+                        mIepBufferHandle[i].out_vt_buffer->fence_fd = -1;
                     }
                 }
                 if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
                     mSidebandWindow->allocateBuffer(&mIepTempHandle.out_vt_buffer, mDstFrameWidth, mDstFrameHeight,
                             HAL_PIXEL_FORMAT_YCbCr_422_SP,
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
+                    mIepTempHandle.out_vt_buffer->rdy_render_fence_fd = -1;
+                    mIepTempHandle.out_vt_buffer->fence_fd = -1;
                 }
             }
             if (!mIepPrepareList.empty()) {
@@ -1771,6 +1796,8 @@ void HinDevImpl::initPqInfo(int pqMode, int hdmi_range_mode) {
         } else if (mSrcFrameWidth != _ALIGN(mSrcFrameWidth, 64)) {
             if (fmt == RKPQ_IMG_FMT_BG24) {
                 width_stride[0] = _ALIGN(mSrcFrameWidth * 3, 64);
+            } else if (fmt == RKPQ_IMG_FMT_RG24) {
+                width_stride[0] = _ALIGN(mSrcFrameWidth * 3, 64);
             } else if (fmt == RKPQ_IMG_FMT_NV16) {
                 width_stride[0] = _ALIGN(mSrcFrameWidth, 64);
             } else if (fmt == RKPQ_IMG_FMT_NV24){
@@ -1779,7 +1806,7 @@ void HinDevImpl::initPqInfo(int pqMode, int hdmi_range_mode) {
             }
         }
         int src_color_space = 0;
-        if (fmt == RKPQ_IMG_FMT_BG24) {
+        if (fmt == RKPQ_IMG_FMT_BG24 || fmt == RKPQ_IMG_FMT_RG24) {
             if(hdmi_range_mode == 2){//force limit
                 src_color_space = RKPQ_CLR_SPC_RGB_LIMITED;
             }else if (hdmi_range_mode == 1){//force full
@@ -1860,6 +1887,8 @@ void HinDevImpl::initPqInfo(int pqMode, int hdmi_range_mode) {
 int HinDevImpl::getPqFmt(int V4L2Fmt) {
     if (V4L2_PIX_FMT_BGR24 == V4L2Fmt) {
         return RKPQ_IMG_FMT_BG24;
+    } else if (V4L2_PIX_FMT_RGB24 == V4L2Fmt) {
+        return RKPQ_IMG_FMT_RG24;
     } else if (V4L2_PIX_FMT_NV12 == V4L2Fmt) {
         return RKPQ_IMG_FMT_NV12;
     } else if (V4L2_PIX_FMT_NV16 == V4L2Fmt) {
@@ -1916,6 +1945,7 @@ int HinDevImpl::deal_priv_message(const std::string action, const std::map<std::
 void HinDevImpl::buffDataTransfer(buffer_handle_t srcHandle, int srcFmt, int srcWidth, int srcHeight,
         buffer_handle_t dstHandle, int dstFmt, int dstWidth, int dstHeight, int dstWStride, int dstHStride) {
     if (V4L2_PIX_FMT_BGR24 == srcFmt
+            || V4L2_PIX_FMT_RGB24 == srcFmt
             || V4L2_PIX_FMT_NV12 == srcFmt
             || V4L2_PIX_FMT_NV16 == srcFmt) {
         RgaCropScale::Params src, dst;
@@ -1929,6 +1959,8 @@ void HinDevImpl::buffDataTransfer(buffer_handle_t srcHandle, int srcFmt, int src
         int rgaSrcFormat = srcFmt;
         if (V4L2_PIX_FMT_BGR24 == srcFmt) {
             rgaSrcFormat = RK_FORMAT_BGR_888;
+        } else if (V4L2_PIX_FMT_RGB24 == srcFmt) {
+            rgaSrcFormat = RK_FORMAT_RGB_888;
         } else if (V4L2_PIX_FMT_NV12 == srcFmt) {
             rgaSrcFormat = RK_FORMAT_YCbCr_420_SP;
         } else if (V4L2_PIX_FMT_NV16 == srcFmt) {
@@ -1947,6 +1979,8 @@ void HinDevImpl::buffDataTransfer(buffer_handle_t srcHandle, int srcFmt, int src
         int rgaDstFormat = dstFmt;
         if (V4L2_PIX_FMT_BGR24 == dstFmt) {
             rgaDstFormat = RK_FORMAT_BGR_888;
+        } else if (V4L2_PIX_FMT_RGB24 == dstFmt) {
+            rgaDstFormat = RK_FORMAT_RGB_888;
         } else if (V4L2_PIX_FMT_NV12 == dstFmt) {
             rgaDstFormat = RK_FORMAT_YCbCr_420_SP;
         } else if (V4L2_PIX_FMT_NV16 == dstFmt) {
@@ -2003,6 +2037,7 @@ int HinDevImpl::workThread()
 
         int currDqbufHandleIndex = mHinNodeInfo->currBufferHandleIndex;
         int currentDqBufFd = 0;
+        int currentFenceFd = 0;
         if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
             DEBUG_PRINT(mDebugLevel, "start VIDIOC_DQBUF");
             if (mPcieMode == PCIE_EP) {
@@ -2030,8 +2065,18 @@ int HinDevImpl::workThread()
         }
         if (ret < 0) {
             DEBUG_PRINT(3, "VIDIOC_DQBUF Failed, error: %s", strerror(errno));
+            usleep(1000);
             return 0;
         } else {
+            if (mPcieMode != PCIE_EP) {
+                currentFenceFd = (mCurrentBufferArray.timecode.userbits[3] << 24)
+                    + (mCurrentBufferArray.timecode.userbits[2] << 16)
+                    + (mCurrentBufferArray.timecode.userbits[1] << 8)
+                    + (mCurrentBufferArray.timecode.userbits[0]);
+            }
+            if (currentFenceFd == 0 || currentFenceFd == 0xFFFFFFFF) {
+                currentFenceFd = -1;
+            }
             if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
                 bool findCorrectFd = false;
                 if (mPcieMode != PCIE_EP) {
@@ -2051,8 +2096,8 @@ int HinDevImpl::workThread()
                     }
                 }
                 if (mDebugLevel == 3 && mPcieMode != PCIE_EP) {
-                    ALOGE("VIDIOC_DQBUF mEnableDump=%d,mDumpFrameCount=%d, tid=%lu, currIndex=%d, fd=%d, %ld.%03ld-%ld",
-                        mEnableDump,mDumpFrameCount, tid, currDqbufHandleIndex, currentDqBufFd,
+                    ALOGE("VIDIOC_DQBUF mEnableDump=%d,mDumpFrameCount=%d, tid=%lu, currIndex=%d, fd=%d, fenceFd=%d, %ld.%03ld-%ld",
+                        mEnableDump,mDumpFrameCount, tid, currDqbufHandleIndex, currentDqBufFd, currentFenceFd,
                         (long)mCurrentBufferArray.timestamp.tv_sec, (long)(mCurrentBufferArray.timestamp.tv_usec/1000), (long)(systemTime()/1000000));
                 }
             } else if (mDebugLevel == 3 && mPcieMode != PCIE_EP) {
@@ -2062,6 +2107,10 @@ int HinDevImpl::workThread()
         }
         if (mState != START) {
             //DEBUG_PRINT(3, "mState != START skip");
+            if (currentFenceFd > 0) {
+                DEBUG_PRINT(3, "mState %d is not START, try wait fence_fd=%d", mState, currentFenceFd);
+                waitFence(__func__, currentFenceFd);
+            }
             return NO_ERROR;
         }
 
@@ -2136,21 +2185,28 @@ int HinDevImpl::workThread()
                 ret = ioctl(mHinDevHandle, VIDIOC_QBUF, &mHinNodeInfo->bufferArray[currDqbufHandleIndex]);
                 mSkipFrame--;
                 DEBUG_PRINT(3, "mSkipFrame not to show %d", mSkipFrame);
+                waitFence(__func__, currentFenceFd);
                 return NO_ERROR;
             }
 
             if (mUseZme && mPqMode == PQ_OFF) {
                 ret = ioctl(mHinDevHandle, VIDIOC_QBUF, &mHinNodeInfo->bufferArray[currDqbufHandleIndex]);
                 DEBUG_PRINT(3, "wait zme prepared");
+                waitFence(__func__, currentFenceFd);
                 return NO_ERROR;
             }
 
             bool showPqFrame = false;
+            //===================test fence start==================
+            //waitFence(__func__, currentFenceFd);
+            //ALOGE("=====================%d",currentFenceFd);
+            //===================test fence end====================
             if (mPqMode != PQ_OFF && needShowPqFrame(mPqMode)) {
                 nsecs_t startTime = systemTime();
                 bool fillFinish = false;
                 while (mState == START && !fillFinish && mPqMode != PQ_OFF) {
                     {
+                        waitFence(__func__, currentFenceFd);
                         Mutex::Autolock autoLock(mBufferLock);
                         DEBUG_PRINT(mDebugLevel, "enter mBufferLock mPqMode=%d", mPqMode);
                         if (mPqMode != PQ_OFF && !mPqPrepareList.empty()) {
@@ -2210,9 +2266,18 @@ int HinDevImpl::workThread()
                     }
                 }
                 DEBUG_PRINT(mDebugLevel, "sidebandwindow show index=%d", currDqbufHandleIndex);
+                mHinNodeInfo->vt_buffers[currDqbufHandleIndex]->rdy_render_fence_fd = currentFenceFd;
                 showVTunnel(mHinNodeInfo->vt_buffers[currDqbufHandleIndex]);
+            } else {
+                if (currentFenceFd > 0) {
+                    DEBUG_PRINT(3, "showPqFrame=%d, mState=%d, try wait fence_fd=%d",
+                        showPqFrame, mState, currentFenceFd);
+                    waitFence(__func__, currentFenceFd);
+                }
             }
         } else {
+            waitFence(__func__, currentFenceFd);
+
             if (mV4L2DataFormatConvert) {
                 mSidebandWindow->buffDataTransfer(mHinNodeInfo->buffer_handle_poll[currDqbufHandleIndex], mPreviewRawHandle[mPreviewBuffIndex].outHandle);
             }
@@ -2230,6 +2295,16 @@ int HinDevImpl::workThread()
         usleep(500);
     }
     return NO_ERROR;
+}
+
+void HinDevImpl::waitFence(const char* log_tag, int &fence_fd) {
+    if (fence_fd > 0) {
+        sp<Fence> driverFence(new Fence(fence_fd));
+        DEBUG_PRINT(mDebugLevel, "%s start wait fence %d", log_tag, fence_fd);
+        int ret = driverFence->wait(-1);
+        DEBUG_PRINT(mDebugLevel, "%s wait fence %d, ret=%d", log_tag, fence_fd, ret);
+        fence_fd = -1;
+    }
 }
 
 bool HinDevImpl::needShowPqFrame(int pqMode) {
@@ -2270,10 +2345,19 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
         return;
     }
     int ret = 0;
+    int fence_fd = vt_buffer->rdy_render_fence_fd;
     if (mDebugLevel == 3) {
-        ALOGW("%s %d vtQueueFd=%d", __FUNCTION__, __LINE__, vt_buffer->handle->data[0]);
+        ALOGW("%s %d vtQueueFd=%d, fence_fd=%d", __FUNCTION__, __LINE__, vt_buffer->handle->data[0], fence_fd);
     }
     ret = mSidebandWindow->queueBuffer(vt_buffer, -1, 0);
+    if (fence_fd > 0) {
+        DEBUG_PRINT(mDebugLevel, "close fence_fd=%d", fence_fd);
+        if (ret != 0) {
+            DEBUG_PRINT(3, "close fence_fd=%d, but queueBuffer ret=%d", fence_fd, ret);
+        }
+        close(fence_fd);
+    }
+
     if (mState != START) {
         ALOGE("%s after vtunnel queueBuffer mState != START", __FUNCTION__);
         return;
