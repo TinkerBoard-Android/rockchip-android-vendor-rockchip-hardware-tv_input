@@ -809,7 +809,10 @@ int HinDevImpl::start()
     char prop_value[PROPERTY_VALUE_MAX] = {0};
     property_get(TV_INPUT_DISPLAY_RATIO, prop_value, "0");
     mDisplayRatio = (int)atoi(prop_value);
-    property_set(TV_INPUT_PQ_MODE, "0");
+    property_get(SOC_PRODUCT, prop_value, "");
+    if (strcmp(prop_value, "rk3588") == 0) {
+        property_set(TV_INPUT_PQ_MODE, "0");
+    }
     property_set(TV_INPUT_HDMIIN, "1");
 
     if (mPcieMode == PCIE_RC) {
@@ -851,8 +854,11 @@ int HinDevImpl::stop()
     mPcieStop = true;
     mPcieState = PCIE_STATE_UNSET;
     char prop_value[PROPERTY_VALUE_MAX] = {0};
+    char soc_prop[PROPERTY_VALUE_MAX] = {0};
     property_get(TV_INPUT_PQ_ENABLE, prop_value, "0");
-    if ((int)atoi(prop_value) == 1 && !mPqIniting) {
+    property_get(SOC_PRODUCT, soc_prop, "");
+    if (strcmp(soc_prop, "rk3588") == 0 && (int)atoi(prop_value) == 1
+        && !mPqIniting) {
         property_set(TV_INPUT_PQ_MODE, "1");
     }
     property_set(TV_INPUT_HDMIIN, "0");
