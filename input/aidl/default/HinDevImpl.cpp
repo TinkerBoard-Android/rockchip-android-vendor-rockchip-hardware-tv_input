@@ -2393,7 +2393,7 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
     }
     mQbufCount++;
     DEBUG_PRINT(mDebugLevel, "queueBuffer ret=%d, mQbufCount=%d", ret, mQbufCount);
-    if (mQbufCount > 2) {
+    if (mQbufCount > 3) {
         vt_buffer_t *vtBuf;
         //memset(vtBuf, 0, sizeof(vt_buffer_t));
         int fence_id = -1;
