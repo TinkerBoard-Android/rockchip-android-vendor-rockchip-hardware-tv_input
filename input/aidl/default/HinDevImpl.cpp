@@ -182,6 +182,11 @@ HinDevImpl::HinDevImpl()
     property_get(TV_INPUT_PCIE_MODE, prop_value, "0");
     mPcieMode = (int)atoi(prop_value);
 
+    memset(prop_value, '\0', sizeof(prop_value));
+    property_get(SOC_PRODUCT, prop_value, "");
+    DEBUG_PRINT(3, "soc %s=%s", SOC_PRODUCT, prop_value);
+    mIsRk3576 = strcmp(prop_value, "rk3576") == 0;
+
     ALOGE("prop value : mHdmiInType=%d, mDebugLevel=%d, mSkipFrame=%d, mPcieMode=%d",
         mHdmiInType, mDebugLevel, mSkipFrame, mPcieMode);
 
@@ -309,10 +314,7 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
     info.left = 0;
     info.width = mSrcFrameWidth;
     info.height = mSrcFrameHeight;
-    memset(prop_value, '\0', sizeof(prop_value));
-    property_get(SOC_PRODUCT, prop_value, "");
-    DEBUG_PRINT(3, "soc %s=%s", SOC_PRODUCT, prop_value);
-    if (strcmp(prop_value, "rk3576") == 0) {
+    if (mIsRk3576) {
         info.usage = STREAM_BUFFER_GRALLOC_USAGE;
     } else {
         info.usage = STREAM_BUFFER_GRALLOC_USAGE_CMA;
@@ -324,20 +326,31 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
             mFrameType |= TYPE_SIDEBAND_WINDOW;
         } else {
             mFrameType |= TYPE_SIDEBAND_VTUNNEL;
-            if (property_get_int32(TV_INPUT_PQ_ENABLE, 0)) {
+            property_get(TV_INPUT_DST_RANGE, prop_value, "0");
+            if ((property_get_int32(TV_INPUT_PQ_ENABLE, 0) || !strcmp(prop_value, "full"))
+                    && !mIsRk3576) {
                 info.data_space = HAL_DATASPACE_STANDARD_BT601_625
                     | HAL_DATASPACE_TRANSFER_SMPTE_170M | HAL_DATASPACE_RANGE_FULL;
+            } else if(!strcmp(prop_value, "limit") && !mIsRk3576) {
+                info.data_space = HAL_DATASPACE_STANDARD_BT601_625
+                    | HAL_DATASPACE_TRANSFER_SMPTE_170M | HAL_DATASPACE_RANGE_LIMITED;
             } else {
-                info.data_space = 0x2;
+                get_extfmt_info();
+                memset(prop_value, '\0', sizeof(prop_value));
+                property_get(TV_INPUT_SRC_RANGE, prop_value, "auto");
+                mSrcRange = SRC_RANGE_AUTO;
+                if (mIsRk3576 && 0 == strcmp(prop_value, "limit")) {
+                    info.data_space = HAL_DATASPACE_RANGE_LIMITED;
+                    mSrcRange = SRC_RANGE_LIMITED;
+                } else if (mIsRk3576 && 0 == strcmp(prop_value, "full")) {
+                    info.data_space = HAL_DATASPACE_RANGE_FULL;
+                    mSrcRange = SRC_RANGE_FULL;
+                } else if (mFrameColorRange == HDMIRX_LIMIT_RANGE) {
+                    info.data_space = HAL_DATASPACE_RANGE_LIMITED;
+                } else {
+                    info.data_space = HAL_DATASPACE_RANGE_FULL;
+                }
                 if (V4L2_PIX_FMT_BGR24 != mPixelFormat) {
-                    get_extfmt_info();
-                    if (mFrameColorRange == HDMIRX_LIMIT_RANGE) {
-                        info.data_space = HAL_DATASPACE_RANGE_LIMITED;
-                    } else if (mFrameColorRange == HDMIRX_FULL_RANGE) {
-                        info.data_space = HAL_DATASPACE_RANGE_FULL;
-                    } else {
-                        info.data_space = HAL_DATASPACE_RANGE_FULL;
-                    }
                     if (mFrameColorSpace == HDMIRX_XVYCC601 || mFrameColorSpace == HDMIRX_SYCC601) {
                         info.data_space |= HAL_DATASPACE_STANDARD_BT601_625 | HAL_DATASPACE_TRANSFER_SMPTE_170M;
                     } else {
@@ -731,6 +744,10 @@ int HinDevImpl::start_device()
 
     v4l2_buf_type bufType;
     bufType = TVHAL_V4L2_BUF_TYPE;
+    if (mIsRk3576) {
+        ret = ioctl(mHinDevEventHandle, RK_HDMIRX_CMD_SET_OUTPUT_RANGE, &mSrcRange);
+        DEBUG_PRINT(3, "set RK_HDMIRX_CMD_SET_OUTPUT_RANGE %d, ret=%d", mSrcRange, ret);
+    }
     ret = ioctl(mHinDevHandle, VIDIOC_STREAMON, &bufType);
     if (ret < 0) {
         DEBUG_PRINT(3, "VIDIOC_STREAMON Failed, error: %s", strerror(errno));
@@ -1620,7 +1637,7 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
     int tempPqMode = PQ_OFF;
     int hdmi_range_mode = 0;
     char range_type[PROPERTY_VALUE_MAX] = {0};
-    property_get(TV_INPUT_HDMI_RANGE, range_type, "auto");
+    property_get(TV_INPUT_SRC_RANGE, range_type, "auto");
     if (strcmp(range_type, "auto") == 0) {
         hdmi_range_mode = 0;
     }else if (strcmp(range_type, "full") == 0){
@@ -1886,11 +1903,13 @@ void HinDevImpl::initPqInfo(int pqMode, int hdmi_range_mode) {
         }
         int dst_color_space = RKPQ_CLR_SPC_YUV_601_FULL;
             char prop_value[PROPERTY_VALUE_MAX] = {0};
-            property_get(TV_INPUT_HDMI_RANGE, prop_value, "auto");
+            property_get(TV_INPUT_DST_RANGE, prop_value, "auto");
             if (!strcmp(prop_value, "auto") && src_color_space == RKPQ_CLR_SPC_RGB_LIMITED) {
                 dst_color_space = RKPQ_CLR_SPC_YUV_601_FULL;
             } else if (!strcmp(prop_value, "limit")) {
                 dst_color_space = RKPQ_CLR_SPC_YUV_601_LIMITED;
+            } else if (!strcmp(prop_value, "709limit")) {
+                dst_color_space = RKPQ_CLR_SPC_YUV_709_LIMITED;
             }
         int flag = RKPQ_FLAG_CALC_MEAN_LUMA | RKPQ_FLAG_HIGH_PERFORM;
         ALOGD("rkpq init %dx%d stride=%d-%d, fmt=%d, space=%d-%d, flag=%d, alignment=%d",
@@ -1932,15 +1951,17 @@ int HinDevImpl::getPqFmt(int V4L2Fmt) {
 }
 
 int HinDevImpl::getOutRange(char* value) {
-    int ret = HDMIRX_DEFAULT_RANGE;
+    int ret = DST_RANGE_AUTO;
     if (!strcmp(value, "limit")) {
-        ret = HDMIRX_LIMIT_RANGE;
+        ret = DST_RANGE_601_LIMITED;
     } else if (!strcmp(value, "full")) {
-        ret = HDMIRX_FULL_RANGE;
+        ret = DST_RANGE_601_FULL;
     } else if (!strcmp(value, "auto")) {
-        //auto means default
-        ret = HDMIRX_DEFAULT_RANGE;
+        ret = DST_RANGE_AUTO;
+    } else if (!strcmp(value, "709limit")) {
+        ret = DST_RANGE_709_LIMITED;
     }
+    //3588 vop don't support 709 full output, so use the auto
     return ret;
 }
 
@@ -2764,8 +2785,30 @@ int HinDevImpl::pqBufferThread() {
     int pqMode = PQ_OFF;
     int value = 0;
     int auto_detection = property_get_int32(TV_INPUT_PQ_AUTO_DETECTION, 0);
-    property_get(TV_INPUT_PQ_RANGE, prop_value, "auto");
+    property_get(TV_INPUT_DST_RANGE, prop_value, "auto");
     mOutRange = getOutRange(prop_value);
+    if (mIsRk3576) {
+        memset(prop_value, '\0', sizeof(prop_value));
+        property_get(TV_INPUT_SRC_RANGE, prop_value, "auto");
+        int srcRange = SRC_RANGE_AUTO;
+        if (0 == strcmp(prop_value, "limit")) {
+            srcRange = SRC_RANGE_LIMITED;
+        } else if (0 == strcmp(prop_value, "full")) {
+            srcRange = SRC_RANGE_FULL;
+        }
+        if (srcRange != mSrcRange) {
+            DEBUG_PRINT(3, "current srcRange=%d, last srcRange=%d", srcRange, mSrcRange);
+            tv_input_command command;
+            command.command_id = CMD_HDMIIN_RESET;
+            if(mNotifyCommandCb != NULL) {
+                mNotifyCommandCb(command);
+            }
+            mSrcRange = srcRange;
+            usleep(500);
+            return NO_ERROR;
+        }
+    }
+    memset(prop_value, '\0', sizeof(prop_value));
     property_get(TV_INPUT_PQ_ENABLE, prop_value, "0");
     value = (int)atoi(prop_value);
     if (value != 0)  {
@@ -2795,7 +2838,7 @@ int HinDevImpl::pqBufferThread() {
     if (value != 0) {
         pqMode |= PQ_CACL_LUMA;
     } else if (auto_detection != 0) {
-        property_get(TV_INPUT_HDMI_RANGE, prop_value, "auto");
+        property_get(TV_INPUT_DST_RANGE, prop_value, "auto");
         int fmt = getPqFmt(mPixelFormat);
       if (!strcmp(prop_value, "auto") && fmt == RKPQ_IMG_FMT_BG24 &&
            mFrameColorRange != HDMIRX_FULL_RANGE) {
@@ -2811,10 +2854,14 @@ int HinDevImpl::pqBufferThread() {
         pqMode |= PQ_MEDIAN_BLUR;
     }
 
-   if ((mOutRange == HDMIRX_LIMIT_RANGE && mFrameColorRange != HDMIRX_LIMIT_RANGE) ||
-        (mOutRange == HDMIRX_FULL_RANGE && mFrameColorRange != HDMIRX_FULL_RANGE)) {
-       pqMode |= PQ_LF_RANGE;
-   }
+    if ((mOutRange == DST_RANGE_601_LIMITED && (mFrameColorRange != HDMIRX_LIMIT_RANGE || (
+        mFrameColorSpace != HDMIRX_XVYCC601 && mFrameColorSpace != HDMIRX_SYCC601))) ||
+        (mOutRange == DST_RANGE_601_FULL && (mFrameColorRange != HDMIRX_FULL_RANGE || (
+        mFrameColorSpace != HDMIRX_XVYCC601 && mFrameColorSpace != HDMIRX_SYCC601))) ||
+        (mOutRange == DST_RANGE_709_LIMITED && (mFrameColorRange != HDMIRX_LIMIT_RANGE ||
+         mFrameColorSpace != HDMIRX_XVYCC709))) {
+        pqMode |= PQ_LF_RANGE;
+    }
 
     if (mPqMode != pqMode || mOutRange != mLastOutRange) {
         bool isPqShowFrameMode = needShowPqFrame(pqMode);

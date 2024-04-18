@@ -108,6 +108,20 @@ enum State {
     STOPED,
 };
 
+enum src_range {
+    SRC_RANGE_AUTO = 0,
+    SRC_RANGE_LIMITED = 1,
+    SRC_RANGE_FULL = 2,
+};
+
+enum dst_range {
+    DST_RANGE_AUTO,
+    DST_RANGE_601_LIMITED,
+    DST_RANGE_601_FULL,
+    DST_RANGE_709_LIMITED,
+    DST_RANGE_709_FULL,
+};
+
 typedef struct tv_preview_buff_app {
     int bufferFd;
     uint64_t bufferId;
@@ -351,6 +365,7 @@ class HinDevImpl {
         bool mIsLastPqShowFrameMode = false;
         int mOutRange = HDMIRX_DEFAULT_RANGE;
         int mLastOutRange = mOutRange;
+        int mSrcRange = SRC_RANGE_AUTO;
         std::vector<tv_pq_buffer_info_t> mPqBufferHandle;
         std::vector<int> mPqPrepareList;
         std::vector<int> mPqDoneList;
@@ -383,5 +398,6 @@ class HinDevImpl {
         std::vector<tv_pq_buffer_info_t> mPcieBufList;
         std::vector<int> mPcieBufPrepareList;
         Mutex mPcieBufLock;
+        bool mIsRk3576 = false;
         // std::vector<tv_input_preview_buff_t> mPreviewBuff;
 };

@@ -90,7 +90,6 @@ static const int64_t STREAM_BUFFER_GRALLOC_USAGE_CMA = (
 #define TV_INPUT_SKIP_FRAME "persist.vendor.tvinput.skipframe"
 #define TV_INPUT_PQ_ENABLE "persist.vendor.tvinput.rkpq.enable"
 #define TV_INPUT_PQ_MODE "persist.vendor.tvinput.rkpq.mode"
-#define TV_INPUT_PQ_RANGE "persist.vendor.tvinput.rkpq.range"
 #define TV_INPUT_PQ_LUMA "persist.vendor.tvinput.rkpq.luma"
 #define TV_INPUT_PQ_AUTO_DETECTION "persist.vendor.tvinput.rkpq.auto.detection"
 #define TV_INPUT_PQ_MEDIAN_BLUE "persist.vendor.tvinput.rkpq.medianblur"
@@ -98,7 +97,8 @@ static const int64_t STREAM_BUFFER_GRALLOC_USAGE_CMA = (
 
 #define TV_INPUT_RESOLUTION_MAIN "persist.vendor.resolution.main"
 #define TV_INPUT_OVERSCAN_PREF "persist.vendor.overscan."
-#define TV_INPUT_HDMI_RANGE "persist.vendor.tvinput.rkpq.range"
+#define TV_INPUT_DST_RANGE "persist.vendor.tvinput.rkpq.dst.range"
+#define TV_INPUT_SRC_RANGE "persist.vendor.tvinput.rkpq.src.range"
 #define TV_INPUT_HDMIIN_TYPE "tvinput.hdmiin.type"
 #define TV_INPUT_DISPLAY_RATIO "vendor.tvinput.displayratio"
 #define TV_INPUT_DEBUG_LEVEL "vendor.tvinput.debug.level"
