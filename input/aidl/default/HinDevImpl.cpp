@@ -246,10 +246,14 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
             mHinDevEventHandle = -1;
         }
         findDevice(0, initWidth, initHeight, initFormat);
+    } else {
+        get_current_sourcesize(initWidth, initHeight, initFormat);
     }
     ALOGE("%s mHdmiInType=%d, id=%d, initType=%d", __FUNCTION__, mHdmiInType, id, initType);
-    if(get_HdmiIn(true) <= 0 || getNativeWindowFormat(mPixelFormat) == -1){
-	DEBUG_PRINT(3, "[%s %d] hdmi isnt in", __FUNCTION__, __LINE__);
+    if(get_HdmiIn(true) <= 0
+            || mSrcFrameWidth == 0 || mSrcFrameHeight == 0
+            || getNativeWindowFormat(mPixelFormat) == -1){
+        DEBUG_PRINT(3, "hdmi isnt in %dx%d, format=%d", mSrcFrameWidth, mSrcFrameHeight, mPixelFormat);
         return -1;
     }
     mHinNodeInfo = (struct HinNodeInfo *) calloc (1, sizeof (struct HinNodeInfo));
@@ -1023,6 +1027,7 @@ int HinDevImpl::get_csi_format(int fd, int &hdmi_in_width, int &hdmi_in_height,i
     int err = ioctl(fd, VIDIOC_SUBDEV_G_FMT, &format);
     if (err < 0) {
         ALOGE("[%s %d] failed, VIDIOC_SUBDEV_G_FMT %d, %s", __FUNCTION__, __LINE__, err, strerror(err));
+        return 0;
     } else {
         hdmi_in_width = format.format.width;
         hdmi_in_height = format.format.height;
@@ -1039,7 +1044,7 @@ int HinDevImpl::get_csi_format(int fd, int &hdmi_in_width, int &hdmi_in_height,i
             format.pad, format.which, hdmi_in_width, hdmi_in_height, mPixelFormat,
             format.format.field, format.format.colorspace);
     }
-    if(hdmi_in_width == 0 || hdmi_in_height == 0) return 0;
+    //if(hdmi_in_width == 0 || hdmi_in_height == 0) return 0;
     return -1;
 }
 
@@ -1072,19 +1077,17 @@ int HinDevImpl::get_format(int fd, int &hdmi_in_width, int &hdmi_in_height,int& 
     	}
     }
     int err = ioctl(mHinDevHandle, VIDIOC_G_FMT, &format);
-    if (err < 0)
-    {
+    if (err < 0) {
         DEBUG_PRINT(3, "[%s %d] failed, VIDIOC_G_FMT %d, %s", __FUNCTION__, __LINE__, err, strerror(err));
-    }
-    else
-    {
+        return 0;
+    } else {
         DEBUG_PRINT(3, "after %s get from v4l2 format.type = %d ", __FUNCTION__, format.type);
         DEBUG_PRINT(3, "after %s get from v4l2 format.fmt.pix.width =%d", __FUNCTION__, format.fmt.pix.width);
         DEBUG_PRINT(3, "after %s get from v4l2 format.fmt.pix.height =%d", __FUNCTION__, format.fmt.pix.height);
         DEBUG_PRINT(3, "after %s get from v4l2 format.fmt.pix.pixelformat =%d", __FUNCTION__, format.fmt.pix.pixelformat);
     }
 
-    if(hdmi_in_width == 0 || hdmi_in_height == 0) return 0;
+    //if(hdmi_in_width == 0 || hdmi_in_height == 0) return 0;
     return -1;
 }
 

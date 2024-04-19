@@ -66,6 +66,9 @@ status_t RTSidebandWindow::init(const vt_win_attr_t *attr, int sidebandType) {
     memcpy(&mSidebandInfo, attr, sizeof(vt_win_attr_t));
     ALOGD("RTSidebandWindow::init width=%d, height=%d, format=%x, usage=%lld, type=%d",
         mSidebandInfo.width, mSidebandInfo.height, mSidebandInfo.format, (long long)mSidebandInfo.usage, sidebandType);
+    if (0 == mSidebandInfo.width || 0 == mSidebandInfo.height) {
+        goto __FAILED;
+    }
 
     if (mSidebandType & TYPE_SIDEBAND_WINDOW) {
         ALOGE("TYPE_SIDEBAND_WINDOW not support anymore");
