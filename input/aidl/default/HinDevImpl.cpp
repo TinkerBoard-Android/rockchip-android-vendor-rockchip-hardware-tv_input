@@ -1089,7 +1089,7 @@ int HinDevImpl::get_format(int fd, int &hdmi_in_width, int &hdmi_in_height,int& 
 }
 
 void HinDevImpl::query_fps_info() {
-    int err = ioctl(mHinDevHandle, RK_HDMIRX_CMD_GET_FPS, &mFrameFps);
+    int err = ioctl(mHinDevEventHandle, RK_HDMIRX_CMD_GET_FPS, &mFrameFps);
     if (err < 0) {
         DEBUG_PRINT(3, "failed, RK_HDMIRX_CMD_GET_FPS %d, %s", err, strerror(err));
         mFrameFps = 60;
@@ -1101,7 +1101,7 @@ void HinDevImpl::query_fps_info() {
 int HinDevImpl::get_extfmt_info() {
     query_fps_info();
 
-    int err = ioctl(mHinDevHandle, RK_HDMIRX_CMD_GET_COLOR_RANGE, &mFrameColorRange);
+    int err = ioctl(mHinDevEventHandle, RK_HDMIRX_CMD_GET_COLOR_RANGE, &mFrameColorRange);
     if (err < 0) {
         DEBUG_PRINT(3, "[%s %d] failed, RK_HDMIRX_CMD_GET_COLOR_RANGE %d, %s", __FUNCTION__, __LINE__, err, strerror(err));
         mFrameColorRange = HDMIRX_DEFAULT_RANGE;
@@ -1109,7 +1109,7 @@ int HinDevImpl::get_extfmt_info() {
         DEBUG_PRINT(3, "[%s %d] RK_HDMIRX_CMD_GET_COLOR_RANGE %d", __FUNCTION__, __LINE__, mFrameColorRange);
     }
 
-    err = ioctl(mHinDevHandle, RK_HDMIRX_CMD_GET_COLOR_SPACE, &mFrameColorSpace);
+    err = ioctl(mHinDevEventHandle, RK_HDMIRX_CMD_GET_COLOR_SPACE, &mFrameColorSpace);
     if (err < 0) {
         DEBUG_PRINT(3, "[%s %d] failed, RK_HDMIRX_CMD_GET_COLOR_SPACE %d, %s", __FUNCTION__, __LINE__, err, strerror(err));
         mFrameColorSpace = HDMIRX_XVYCC709;
@@ -3046,8 +3046,13 @@ int HinDevImpl::iepBufferThread() {
 int HinDevImpl::check_interlaced() {
     struct v4l2_dv_timings dv_timings;
     memset(&dv_timings, 0 ,sizeof(struct v4l2_dv_timings));
-    ALOGE("check_interlaced mHinDevHandle %d", mHinDevHandle);
-    int err = ioctl(mHinDevHandle, VIDIOC_QUERY_DV_TIMINGS, &dv_timings);
+    ALOGE("check_interlaced mHinDevHandle=%d, mHinDevEventHandle=%d", mHinDevHandle, mHinDevEventHandle);
+    int err = 0;
+    if (mHinDevHandle == mHinDevEventHandle) {
+        err = ioctl(mHinDevHandle, VIDIOC_QUERY_DV_TIMINGS, &dv_timings);
+    } else {
+        err = ioctl(mHinDevEventHandle, VIDIOC_SUBDEV_QUERY_DV_TIMINGS, &dv_timings);
+    }
     ALOGE("check_interlaced ioctl error %d", err);
     if (err < 0) {
         return 0;
