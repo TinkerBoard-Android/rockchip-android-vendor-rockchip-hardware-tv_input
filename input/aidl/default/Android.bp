@@ -13,9 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+bootstrap_go_package {
+    name: "soong-tvinput",
+    pkgPath: "android/soong/tvinput",
+    deps: [
+        "blueprint",
+        "blueprint-pathtools",
+        "soong",
+        "soong-android",
+        "soong-cc",
+        "soong-genrule",
+    ],
+    srcs: [
+          "include_dirs.go",
+    ],
+    pluginFor: ["soong_build"],
+}
+
+cc_tvinput {
+   name: "cc_tvinput_defaults"
+}
 
 cc_binary {
     name: "android.hardware.tv.input-service.rockchip",
+    defaults: [
+        "cc_tvinput_defaults"
+    ],
     relative_install_path: "hw",
     init_rc: ["input-default1.rc"],
     vintf_fragments: ["android.hardware.tv.input-service.rockchip.xml"],
