@@ -2804,9 +2804,9 @@ int HinDevImpl::pqBufferThread() {
                 mNotifyCommandCb(command);
             }
             mSrcRange = srcRange;
-            usleep(500);
-            return NO_ERROR;
         }
+        usleep(500);
+        return NO_ERROR;
     }
     memset(prop_value, '\0', sizeof(prop_value));
     property_get(TV_INPUT_PQ_ENABLE, prop_value, "0");
@@ -3002,6 +3002,9 @@ int HinDevImpl::pqBufferThread() {
 }
 
 bool HinDevImpl::check_zme(int src_width, int src_height, int* dst_width, int* dst_height) {
+    if (mIsRk3576) {
+        return false;
+    }
     int pq_enable = property_get_int32(TV_INPUT_PQ_ENABLE, 0);
     if(!pq_enable) {
         return false;
