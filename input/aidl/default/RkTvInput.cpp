@@ -359,13 +359,17 @@ void RkTvInput::init() {
                 out_cancel_buffer = stream->sideband_cancel_stream_source_handle;
             }
         }*/
-        out_buffer = native_handle_clone(s_TvInputPriv->mDev->getSindebandBufferHandle());
+        if (s_TvInputPriv->mDev->getSindebandBufferHandle() != NULL) {
+            out_buffer = native_handle_clone(s_TvInputPriv->mDev->getSindebandBufferHandle());
+        }
         s_TvInputPriv->mDev->start();
         /*update audio info when open*/
         hinDevEventCallback(RK_HDMIRX_V4L2_EVENT_AUDIOINFO);
-        mStreamConfigs[deviceId][streamId]->handle = out_buffer;
-        //*_aidl_return = makeToAidl(mStreamConfigs[deviceId][streamId]->handle);
-        _aidl_return->push_back(makeToAidl(mStreamConfigs[deviceId][streamId]->handle));
+        if (out_buffer) {
+            mStreamConfigs[deviceId][streamId]->handle = out_buffer;
+            //*_aidl_return = makeToAidl(mStreamConfigs[deviceId][streamId]->handle);
+            _aidl_return->push_back(makeToAidl(mStreamConfigs[deviceId][streamId]->handle));
+        }
     }
 
     /*mStreamConfigs[in_deviceId][in_streamId]->handle = createNativeHandle(in_streamId);

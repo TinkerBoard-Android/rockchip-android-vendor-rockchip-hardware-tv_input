@@ -45,6 +45,10 @@ class RgaCropScale {
     static int rga_copy(int src_fd, void* src_vir_addr, uint64_t src_phy_addr,
         int src_width, int src_height, int src_format,
         int dst_fd, void* dst_vir_addr, uint64_t dst_phy_addr);
+    static int rga_trans(int src_fd,
+        int src_width, int src_height, int src_format,
+        int dst_fd,
+        int dst_width, int dst_height, int dst_format);
     static int CropScaleNV12Or21(struct Params* in, struct Params* out);
     static int rga_nv12_scale_crop(
 		int src_width, int src_height,
