@@ -2079,7 +2079,6 @@ int HinDevImpl::workThread()
         } else {
             if (mHinNodeInfo->currBufferHandleIndex == APP_PREVIEW_BUFF_CNT)
                 mHinNodeInfo->currBufferHandleIndex = mHinNodeInfo->currBufferHandleIndex % APP_PREVIEW_BUFF_CNT;
-            mRequestCaptureCount--;
         }
 
         int ret;
@@ -2101,6 +2100,9 @@ int HinDevImpl::workThread()
         }
         if(ts == 0 || mState != START) {
             return 0;
+        }
+        if (mFrameType & TYPE_STREAM_BUFFER_PRODUCER) {
+            mRequestCaptureCount--;
         }
       }
 
