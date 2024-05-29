@@ -210,6 +210,7 @@ class HinDevImpl {
         int pqBufferThread();
         int iepBufferThread();
         int pcieThread();
+        int hdcpThread();
         int getPqFmt(int V4L2Fmt);
         void initPqInfo(int pqMode, int hdmi_range_mode);
         // int previewBuffThread();
@@ -229,6 +230,7 @@ class HinDevImpl {
         void pcieEpRestart();
         void query_fps_info();
         void waitFence(const char* log_tag, int &fence_fd);
+        void calcSendFps();
     private:
         class WorkThread : public Thread {
             HinDevImpl* mSource;
@@ -284,6 +286,19 @@ class HinDevImpl {
                 }
                 virtual bool threadLoop() {
                     return mSource->pcieThread() == NO_ERROR;
+                }
+        };
+
+        class HdcpThread : public Thread {
+            HinDevImpl* mSource;
+            public:
+                HdcpThread(HinDevImpl* source) :
+                    Thread(false), mSource(source) { }
+                virtual void onFirstRef() {
+                    run("tif hdcp thread", PRIORITY_URGENT_DISPLAY);
+                }
+                virtual bool threadLoop() {
+                    return mSource->hdcpThread() == NO_ERROR;
                 }
         };
 
@@ -349,6 +364,8 @@ class HinDevImpl {
         int mDebugLevel;
         int mSkipFrame = 0;
         int mDumpFrameCount;
+        int mSendFrameCount = 0;
+        long mSendFrameCountTimeMs = 0;
         void *mUser;
         bool mV4L2DataFormatConvert;
         int mPreviewBuffIndex = 0;
@@ -398,6 +415,10 @@ class HinDevImpl {
         std::vector<tv_pq_buffer_info_t> mPcieBufList;
         std::vector<int> mPcieBufPrepareList;
         Mutex mPcieBufLock;
+        bool mEnableHdcpCheck = false;
+        int mHdcpStatus = 0;
+        int mHdcpCheckCount = 0;
+        sp<HdcpThread> mHdcpThread = nullptr;
         bool mIsRk3576 = false;
         // std::vector<tv_input_preview_buff_t> mPreviewBuff;
 };

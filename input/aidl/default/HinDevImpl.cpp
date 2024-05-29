@@ -294,6 +294,14 @@ int HinDevImpl::init(int id,int initType, int& initWidth, int& initHeight,int& i
     mPqBufferThread = NULL;
     mIepBufferThread = NULL;
     //not set mPcieThread = nullptr;
+    if (mHdcpThread) {
+        DEBUG_PRINT(3, "mHdcpThread not null, start thread exit");
+        mHdcpThread->requestExit();
+        mHdcpThread.clear();
+        mHdcpThread = nullptr;
+        DEBUG_PRINT(3, "mHdcpThread not null, end thread exit");
+    }
+    mHdcpThread = nullptr;
     mV4L2DataFormatConvert = false;
     // mPreviewThreadRunning = false;
     // mPreviewBuffThread = NULL;
@@ -859,6 +867,22 @@ int HinDevImpl::start()
         mPcieThread = new PcieThread(this);
     }
 
+    mHdcpStatus = 0;
+    mHdcpCheckCount = 0;
+    if (mEnableHdcpCheck && mHinDevEventHandle != -1) {
+        int hdcpStatus = 0;
+        int err = ioctl(mHinDevEventHandle, mHinDevHandle == mHinDevEventHandle?
+            RK_HDMIRX_CMD_GET_HDCP_STATUS:RK_HDMIRX_CMD_GET_HDCP_ENC_STATUS,
+            &hdcpStatus);
+        DEBUG_PRINT(3, "get %d HDCP_STATUS err=%d, hdcpStatus=%d", mHinDevEventHandle, err, hdcpStatus);
+        if (err == 0) {
+            mHdcpStatus = hdcpStatus;
+        }
+        ALOGI("Create Hdcp Thread");
+        mHdcpThread = new HdcpThread(this);
+    }
+    mSendFrameCount = 0;
+    mSendFrameCountTimeMs = 0;
     mWorkThread = new WorkThread(this);
     mState = START;
     memset(prop_value, '\0', sizeof(prop_value));
@@ -966,6 +990,14 @@ int HinDevImpl::stop()
     if (!mPcieBufPrepareList.empty()) {
         DEBUG_PRINT(3, "clear mPcieBufPrepareList");
         mPcieBufPrepareList.clear();
+    }
+
+    if (mHdcpThread) {
+        DEBUG_PRINT(3, "hdcp thread start exit");
+        mHdcpThread->requestExit();
+        mHdcpThread.clear();
+        mHdcpThread = nullptr;
+        DEBUG_PRINT(3, "hdcp thread end exit");
     }
 
     enum v4l2_buf_type bufType = TVHAL_V4L2_BUF_TYPE;
@@ -1792,6 +1824,7 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                     }
                     mPqBufferHandle[i].out_vt_buffer->rdy_render_fence_fd = -1;
                     mPqBufferHandle[i].out_vt_buffer->fence_fd = -1;
+                    mPqBufferHandle[i].out_vt_buffer->hdcp_status = mHdcpStatus;
                     mPqPrepareList.push_back(i);
                 }
             }
@@ -1814,6 +1847,7 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
                         mIepBufferHandle[i].out_vt_buffer->rdy_render_fence_fd = -1;
                         mIepBufferHandle[i].out_vt_buffer->fence_fd = -1;
+                        mIepBufferHandle[i].out_vt_buffer->hdcp_status = mHdcpStatus;
                     }
                 }
                 if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
@@ -1822,6 +1856,7 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
                     mIepTempHandle.out_vt_buffer->rdy_render_fence_fd = -1;
                     mIepTempHandle.out_vt_buffer->fence_fd = -1;
+                    mIepTempHandle.out_vt_buffer->hdcp_status = mHdcpStatus;
                 }
             }
             if (!mIepPrepareList.empty()) {
@@ -2364,6 +2399,7 @@ int HinDevImpl::workThread()
                 }
                 DEBUG_PRINT(mDebugLevel, "sidebandwindow show index=%d", currDqbufHandleIndex);
                 mHinNodeInfo->vt_buffers[currDqbufHandleIndex]->rdy_render_fence_fd = currentFenceFd;
+                mHinNodeInfo->vt_buffers[currDqbufHandleIndex]->hdcp_status = mHdcpStatus;
                 showVTunnel(mHinNodeInfo->vt_buffers[currDqbufHandleIndex]);
             } else {
                 if (currentFenceFd > 0) {
@@ -2394,6 +2430,7 @@ int HinDevImpl::workThread()
                 Mutex::Autolock autoLock(mBufferLock);
                 mRkpq->dopq(mHinNodeInfo->bufferArray[currDqbufHandleIndex].m.planes[0].m.fd,
                     mPreviewRawHandle[currDqbufHandleIndex].bufferFd, PQ_LF_RANGE);
+                calcSendFps();
                 wrapCaptureResultAndNotify(mPreviewRawHandle[currDqbufHandleIndex].bufferId,
                     mPreviewRawHandle[currDqbufHandleIndex].outHandle, false);
             }
@@ -2403,6 +2440,19 @@ int HinDevImpl::workThread()
         usleep(500);
     }
     return NO_ERROR;
+}
+
+void HinDevImpl::calcSendFps() {
+    if (mDebugLevel == 3) {
+        mSendFrameCount++;
+        long currentTimeMs = systemTime()/1000000;
+        long divideTimeMs = currentTimeMs - mSendFrameCountTimeMs;
+        if (divideTimeMs > 998) {
+            ALOGI("%ld,%ld send fps=%d", currentTimeMs, divideTimeMs, mSendFrameCount);
+            mSendFrameCount = 0;
+            mSendFrameCountTimeMs = currentTimeMs;
+        }
+    }
 }
 
 void HinDevImpl::waitFence(const char* log_tag, int &fence_fd) {
@@ -2452,6 +2502,10 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
         ALOGE("%s buffer is nullptr", __FUNCTION__);
         return;
     }
+    if (mQbufCount > 8) {
+        ALOGE("%s mQbufCount %d return", __FUNCTION__, mQbufCount);
+        return;
+    }
     int ret = 0;
     int fence_fd = vt_buffer->rdy_render_fence_fd;
     if (mDebugLevel == 3) {
@@ -2465,12 +2519,12 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
         }
         close(fence_fd);
     }
-
+    mQbufCount++;
     if (mState != START) {
-        ALOGE("%s after vtunnel queueBuffer mState != START", __FUNCTION__);
+        ALOGE("%s after vtunnel queueBuffer mState != START mQbufCount=%d", __FUNCTION__, mQbufCount);
         return;
     }
-    mQbufCount++;
+    calcSendFps();
     DEBUG_PRINT(mDebugLevel, "queueBuffer ret=%d, mQbufCount=%d", ret, mQbufCount);
     if (mQbufCount > 3) {
         vt_buffer_t *vtBuf;
@@ -2809,6 +2863,35 @@ int HinDevImpl::pcieThread() {
             return UNKNOWN_ERROR;
         }
     }
+    usleep(1000);
+
+    return NO_ERROR;
+}
+
+int HinDevImpl::hdcpThread() {
+    if (mHinDevEventHandle == -1) {
+        ALOGI("hdcpThread exit with mState=%d, handle=%d", mState, mHinDevEventHandle);
+        return UNKNOWN_ERROR;
+    }
+    if (mState != START) {
+        usleep(1000);
+        return NO_ERROR;
+    }
+    if (mHdcpCheckCount > 500) {
+        mHdcpCheckCount = 0;
+        int hdcpStatus = 0;
+        int err = ioctl(mHinDevEventHandle, mHinDevHandle == mHinDevEventHandle?
+            RK_HDMIRX_CMD_GET_HDCP_STATUS:RK_HDMIRX_CMD_GET_HDCP_ENC_STATUS,
+            &hdcpStatus);
+        if (err < 0) {
+            DEBUG_PRINT(3, "get %d HDCP_STATUS err=%d", mHinDevEventHandle, err);
+        } else if (hdcpStatus != mHdcpStatus) {
+            DEBUG_PRINT(3, "current hdcp state=%d", hdcpStatus);
+            mHdcpStatus = hdcpStatus;
+        }
+        //DEBUG_PRINT(mDebugLevel, "hdcp check hdcpStatus %d", hdcpStatus);
+    }
+    mHdcpCheckCount++;
     usleep(1000);
 
     return NO_ERROR;
