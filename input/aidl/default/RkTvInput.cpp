@@ -54,7 +54,6 @@ static int STREAM_ID_HDMIIN = 0;
 static int s_HinDevStreamWidth = 1280;
 static int s_HinDevStreamHeight = 720;
 static int s_HinDevStreamFormat = DEFAULT_TVHAL_STREAM_FORMAT;
-static int s_HinDevStreamInterlaced = 0;
 static native_handle_t* out_buffer = nullptr;
 static native_handle_t* out_cancel_buffer = nullptr;
 static AidlMessageQueue<int8_t, SynchronizedReadWrite>* mFmqSynchronized;
@@ -113,10 +112,7 @@ V4L2EventCallBack hinDevEventCallback(int event_type) {
         case V4L2_EVENT_SOURCE_CHANGE:
             if (s_TvInputPriv->mDev) {
                 isHdmiIn = s_TvInputPriv->mDev->get_current_sourcesize(s_HinDevStreamWidth, s_HinDevStreamHeight,s_HinDevStreamFormat);
-                s_HinDevStreamInterlaced = s_TvInputPriv->mDev->check_interlaced();
                 s_TvInputPriv->mDev->markPcieEpNeedRestart(PCIE_CMD_HDMIIN_SOURCE_CHANGE);
-                ALOGW("%s event type: %d, isHdmiIn=%d, s_HinDevStreamInterlaced=%d",
-                    __FUNCTION__, event_type, isHdmiIn, s_HinDevStreamInterlaced);
                 TvInputEvent event;
                 event.type = TvInputEventType::STREAM_CONFIGURATIONS_CHANGED;
                 //event.deviceInfo = mDeviceInfos[1]->deviceInfo;
@@ -211,7 +207,6 @@ int RkTvInput::hin_dev_open(int deviceId, int type)
                 return -ENOMEM;
             }
             ALOGW("hinDevImpl->findDevice %d ,%d,0x%x,0x%x!", s_HinDevStreamWidth,s_HinDevStreamHeight,s_HinDevStreamFormat,DEFAULT_V4L2_STREAM_FORMAT);
-            s_TvInputPriv->mDev->set_interlaced(s_HinDevStreamInterlaced);
             s_TvInputPriv->isOpened = true;
         }
     }
