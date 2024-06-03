@@ -57,6 +57,7 @@ static int s_HinDevStreamFormat = DEFAULT_TVHAL_STREAM_FORMAT;
 static native_handle_t* out_buffer = nullptr;
 static native_handle_t* out_cancel_buffer = nullptr;
 static AidlMessageQueue<int8_t, SynchronizedReadWrite>* mFmqSynchronized;
+static Mutex mLock;
 
 void sendTvMessage(const std::string sub_type, long groupId) {
     TvMessageEvent event;
@@ -93,47 +94,81 @@ V4L2EventCallBack hinDevEventCallback(int event_type) {
        return 0;
     }
     bool isHdmiIn = false;
+    bool allowSendMessage = false;
     switch (event_type) {
-        case V4L2_EVENT_CTRL:
-            if (s_TvInputPriv->mDev) {
-                isHdmiIn = s_TvInputPriv->mDev->get_HdmiIn(false);
-                ALOGW("%s event type: %d, isHdmiIn=%d", __FUNCTION__, event_type, isHdmiIn);
-                if (!isHdmiIn) {
-                    std::map<std::string, std::string> data;
-                    s_TvInputPriv->mDev->deal_priv_message("hdmiinout", data);
-                    sendTvMessage("hdmiinout", STREAM_ID_HDMIIN);
-                    /*
-                     * tell AudioPreviewThread to stop when we can not get hdmiin
-                     */
-                    sendTvMessage("audio_present=0", STREAM_ID_HDMIIN);
+        case V4L2_EVENT_CTRL: {
+            {
+                Mutex::Autolock autoLock(mLock);
+                ALOGI("%s do V4L2_EVENT_CTRL", __FUNCTION__);
+                if (s_TvInputPriv->mDev) {
+                    isHdmiIn = s_TvInputPriv->mDev->get_HdmiIn(false);
+                    ALOGW("%s event type: %d, isHdmiIn=%d", __FUNCTION__, event_type, isHdmiIn);
+                    if (!isHdmiIn) {
+                        std::map<std::string, std::string> data;
+                        s_TvInputPriv->mDev->deal_priv_message("hdmiinout", data);
+                        allowSendMessage = true;
+                    }
                 }
             }
+            if (allowSendMessage) {
+                sendTvMessage("hdmiinout", STREAM_ID_HDMIIN);
+                /*
+                 * tell AudioPreviewThread to stop when we can not get hdmiin
+                 */
+                sendTvMessage("audio_present=0", STREAM_ID_HDMIIN);
+            }
             break;
-        case V4L2_EVENT_SOURCE_CHANGE:
-            if (s_TvInputPriv->mDev) {
-                isHdmiIn = s_TvInputPriv->mDev->get_current_sourcesize(s_HinDevStreamWidth, s_HinDevStreamHeight,s_HinDevStreamFormat);
-                s_TvInputPriv->mDev->markPcieEpNeedRestart(PCIE_CMD_HDMIIN_SOURCE_CHANGE);
+        }
+        case V4L2_EVENT_SOURCE_CHANGE: {
+            {
+                Mutex::Autolock autoLock(mLock);
+                ALOGI("%s do V4L2_EVENT_SOURCE_CHANGE", __FUNCTION__);
+                if (s_TvInputPriv->mDev) {
+                    isHdmiIn = s_TvInputPriv->mDev->get_current_sourcesize(s_HinDevStreamWidth, s_HinDevStreamHeight,s_HinDevStreamFormat);
+                    s_TvInputPriv->mDev->markPcieEpNeedRestart(PCIE_CMD_HDMIIN_SOURCE_CHANGE);
+                    allowSendMessage = true;
+                }
+            }
+            if (allowSendMessage) {
                 TvInputEvent event;
                 event.type = TvInputEventType::STREAM_CONFIGURATIONS_CHANGED;
                 //event.deviceInfo = mDeviceInfos[1]->deviceInfo;
                 s_TvInputPriv->callback->notify(event);
             }
             break;
-        case RK_HDMIRX_V4L2_EVENT_SIGNAL_LOST:
-            if (s_TvInputPriv->mDev) {
-                std::map<std::string, std::string> data;
-                s_TvInputPriv->mDev->deal_priv_message("hdmiinout", data);
+        }
+        case RK_HDMIRX_V4L2_EVENT_SIGNAL_LOST: {
+            {
+                Mutex::Autolock autoLock(mLock);
+                ALOGI("%s do RK_HDMIRX_V4L2_EVENT_SIGNAL_LOST", __FUNCTION__);
+                if (s_TvInputPriv->mDev) {
+                    std::map<std::string, std::string> data;
+                    s_TvInputPriv->mDev->deal_priv_message("hdmiinout", data);
+                    allowSendMessage = true;
+                }
+            }
+            if (allowSendMessage) {
                 sendTvMessage("hdmiinout", STREAM_ID_HDMIIN);
             }
             break;
-        case RK_HDMIRX_V4L2_EVENT_AUDIOINFO:
-            if (s_TvInputPriv->mDev && s_TvInputPriv->mDev->started()) {
-                int present = s_TvInputPriv->mDev->get_HdmiAudioPresent();
+        }
+        case RK_HDMIRX_V4L2_EVENT_AUDIOINFO: {
+            int present = 0;
+            {
+                Mutex::Autolock autoLock(mLock);
+                ALOGI("%s do RK_HDMIRX_V4L2_EVENT_AUDIOINFO", __FUNCTION__);
+                if (s_TvInputPriv->mDev && s_TvInputPriv->mDev->started()) {
+                    present = s_TvInputPriv->mDev->get_HdmiAudioPresent();
+                    allowSendMessage = true;
+                }
+            }
+            if (allowSendMessage) {
                 char audio_present[16];
                 sprintf(audio_present, "audio_present=%d", present);
                 sendTvMessage(audio_present, STREAM_ID_HDMIIN);
              }
              break;
+        }
         case CMD_HDMIIN_RESET:
             sendTvMessage("hdmiinreset", STREAM_ID_HDMIIN);
             //s_TvInputPriv->mDev->send_ep_stream(PCIE_CMD_HDMIIN_RESET, NULL);
@@ -402,7 +437,12 @@ void RkTvInput::init() {
             s_TvInputPriv->isInitialized = false;
             s_TvInputPriv->isOpened = false;
             //delete s_TvInputPriv->mDev;
-            s_TvInputPriv->mDev = nullptr;
+            {
+                ALOGW("%s wait lock to set mDev NULL", __FUNCTION__);
+                Mutex::Autolock autoLock(mLock);
+                ALOGW("%s enter lock and set mDev NULL", __FUNCTION__);
+                s_TvInputPriv->mDev = nullptr;
+            }
             if (deviceId < 0 && streamId == 0) {
                 ALOGD("%s,invail deviceId=%d, streamId=%d return -EINVAL",
                     __FUNCTION__, deviceId, streamId);

@@ -923,6 +923,13 @@ int HinDevImpl::stop()
         property_set(TV_INPUT_PQ_MODE, "1");
     }
     property_set(TV_INPUT_HDMIIN, "0");
+
+    if (mV4l2Event) {
+        DEBUG_PRINT(3, "start exit v4l2 event");
+        mV4l2Event->closePipe();
+        mV4l2Event = nullptr;
+        DEBUG_PRINT(3, "end exit v4l2 event");
+    }
     Mutex::Autolock autoLock(mBufferLock);
     ALOGD("%s %d enter mBufferLock", __FUNCTION__, __LINE__);
 
@@ -1029,11 +1036,6 @@ int HinDevImpl::stop()
     if (mHinNodeInfo) {
         free(mHinNodeInfo);
         //mHinNodeInfo = nullptr;
-    }
-
-    if (mV4l2Event) {
-        mV4l2Event->closePipe();
-        mV4l2Event = nullptr;
     }
 
     if (mHinDevHandle > -1) {
