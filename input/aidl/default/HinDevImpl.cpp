@@ -1826,7 +1826,6 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                     }
                     mPqBufferHandle[i].out_vt_buffer->rdy_render_fence_fd = -1;
                     mPqBufferHandle[i].out_vt_buffer->fence_fd = -1;
-                    mPqBufferHandle[i].out_vt_buffer->hdcp_status = mHdcpStatus;
                     mPqPrepareList.push_back(i);
                 }
             }
@@ -1849,7 +1848,6 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
                         mIepBufferHandle[i].out_vt_buffer->rdy_render_fence_fd = -1;
                         mIepBufferHandle[i].out_vt_buffer->fence_fd = -1;
-                        mIepBufferHandle[i].out_vt_buffer->hdcp_status = mHdcpStatus;
                     }
                 }
                 if (mFrameType & TYPE_SIDEBAND_VTUNNEL) {
@@ -1858,7 +1856,6 @@ void HinDevImpl::doPQCmd(const map<string, string> data) {
                             RK_GRALLOC_USAGE_STRIDE_ALIGN_64 | MALI_GRALLOC_USAGE_NO_AFBC);
                     mIepTempHandle.out_vt_buffer->rdy_render_fence_fd = -1;
                     mIepTempHandle.out_vt_buffer->fence_fd = -1;
-                    mIepTempHandle.out_vt_buffer->hdcp_status = mHdcpStatus;
                 }
             }
             if (!mIepPrepareList.empty()) {
@@ -2401,7 +2398,6 @@ int HinDevImpl::workThread()
                 }
                 DEBUG_PRINT(mDebugLevel, "sidebandwindow show index=%d", currDqbufHandleIndex);
                 mHinNodeInfo->vt_buffers[currDqbufHandleIndex]->rdy_render_fence_fd = currentFenceFd;
-                mHinNodeInfo->vt_buffers[currDqbufHandleIndex]->hdcp_status = mHdcpStatus;
                 showVTunnel(mHinNodeInfo->vt_buffers[currDqbufHandleIndex]);
             } else {
                 if (currentFenceFd > 0) {
@@ -2508,6 +2504,7 @@ void HinDevImpl::showVTunnel(vt_buffer_t* vt_buffer) {
         ALOGE("%s mQbufCount %d return", __FUNCTION__, mQbufCount);
         return;
     }
+    vt_buffer->hdcp_status = mHdcpStatus;
     int ret = 0;
     int fence_fd = vt_buffer->rdy_render_fence_fd;
     if (mDebugLevel == 3) {
